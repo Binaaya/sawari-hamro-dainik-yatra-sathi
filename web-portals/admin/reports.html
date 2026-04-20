@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Reports - Sawari Admin</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+  <link rel="stylesheet" href="../shared/css/common.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-container">
+    <div id="sidebar"></div>
+    <div class="main-content">
+      <div id="header"></div>
+      <div class="page-content">
+        <!-- Filters -->
+        <div class="card" style="margin-bottom: 20px; padding: 16px;">
+          <div style="display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-end;">
+            <div>
+              <label class="form-label">Start Date</label>
+              <input type="date" id="start-date" class="form-input" style="width: 160px;">
+            </div>
+            <div>
+              <label class="form-label">End Date</label>
+              <input type="date" id="end-date" class="form-input" style="width: 160px;">
+            </div>
+            <button id="apply-filter-btn" class="btn btn-primary">Apply Filter</button>
+            <button id="export-btn" class="btn btn-outline">Export CSV</button>
+          </div>
+        </div>
+
+        <div id="tabs-container"></div>
+
+        <!-- Rides Report -->
+        <div id="rides-section">
+          <div id="rides-table"></div>
+        </div>
+
+        <!-- Revenue Report -->
+        <div id="revenue-section" style="display: none;">
+          <div class="card" style="margin-bottom: 16px; padding: 16px;">
+            <label class="form-label">Group By</label>
+            <select id="revenue-groupby" class="form-select" style="max-width: 150px;">
+              <option value="day">Daily</option>
+              <option value="week">Weekly</option>
+              <option value="month">Monthly</option>
+            </select>
+          </div>
+          <div id="revenue-table"></div>
+        </div>
+
+        <!-- Transactions Report -->
+        <div id="transactions-section" style="display: none;">
+          <div class="card" style="margin-bottom: 16px; padding: 16px;">
+            <label class="form-label">Transaction Type</label>
+            <select id="transaction-type" class="form-select" style="max-width: 180px;">
+              <option value="">All Types</option>
+              <option value="TopUp">Top Up</option>
+              <option value="RidePayment">Ride Payment</option>
+            </select>
+          </div>
+          <div id="transactions-table"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="../shared/js/firebase-init.js"></script>
+  <script type="module">
+    import { auth } from './assets/js/auth.js';
+    import { api } from './assets/js/api.js';
+    import { Sidebar } from './assets/js/components/sidebar.js';
+    import { Header } from './assets/js/components/header.js';
+    import { Tabs } from './assets/js/components/tabs.js';
+    import { DataTable } from './assets/js/components/table.js';
+    import { Toast } from './assets/js/components/toast.js';
+    import { formatCurrency, formatDateTime, formatDate, downloadCSV } from './assets/js/utils.js';
+
+    let ridesTable, revenueTable, transactionsTable, currentTab = 'rides', currentData = [];
+
+    async function init() {
+      const user = await auth.checkAuth();
+      if (!user) { window.location.href = 'login.html'; return; }
+      document.querySelector('.app-container').classList.add('authenticated');
+
+      new Sidebar('sidebar', 'reports');
+      const header = new Header('header', user);
+      header.setPageTitle('Reports');
+
+      // Set default dates (last 30 days)
+      const endDate = new Date();
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - 30);
+      document.getElementById('start-date').value = startDate.toISOString().split('T')[0];
+      document.getElementById('end-date').value = endDate.toISOString().split('T')[0];
+
+      new Tabs('tabs-container', {
+        tabs: [
+          { id: 'rides', label: 'Rides Report' },
+          { id: 'revenue', label: 'Revenue Report' },
+          { id: 'transactions', label: 'Transactions' }
+        ],
+        activeTab: currentTab,
+        onChange: (tabId) => {
+          currentTab = tabId;
+          document.getElementById('rides-section').style.display = tabId === 'rides' ? 'block' : 'none';
+          document.getElementById('revenue-section').style.display = tabId === 'revenue' ? 'block' : 'none';
+          document.getElementById('transactions-section').style.display = tabId === 'transactions' ? 'block' : 'none';
+          loadReport();
+        }
+      });
+
+      initTables();
+      loadReport();
+
+      document.getElementById('apply-filter-btn').addEventListener('click', () => loadReport());
+      document.getElementById('export-btn').addEventListener('click', () => exportReport());
+      document.getElementById('revenue-groupby').addEventListener('change', () => loadReport());
+      document.getElementById('transaction-type').addEventListener('change', () => loadReport());
+    }
+
+    function initTables() {
+      ridesTable = new DataTable('rides-table', {
+        columns: [
+          { key: 'rideid', label: 'ID' },
+          { key: 'passenger_name', label: 'Passenger' },
+          { key: 'routename', label: 'Route' },
+          { key: 'entry_stop', label: 'Entry' },
+          { key: 'exit_stop', label: 'Exit' },
+          { key: 'fareamountnpr', label: 'Fare', render: (v) => formatCurrency(v) },
+          { key: 'ridestatus', label: 'Status', render: (v) => `<span class="badge badge-${v === 'Completed' ? 'approved' : v === 'Cancelled' ? 'dismissed' : 'in-progress'}">${v}</span>` },
+          { key: 'entrytime', label: 'Date', render: (v) => formatDateTime(v) }
+        ],
+        emptyMessage: 'No ride data for selected period'
+      });
+
+      revenueTable = new DataTable('revenue-table', {
+        columns: [
+          { key: 'period', label: 'Period' },
+          { key: 'total_rides', label: 'Total Rides' },
+          { key: 'completed_rides', label: 'Completed' },
+          { key: 'total_revenue', label: 'Revenue', render: (v) => formatCurrency(v) },
+          { key: 'avg_fare', label: 'Avg Fare', render: (v) => formatCurrency(v) }
+        ],
+        emptyMessage: 'No revenue data for selected period'
+      });
+
+      transactionsTable = new DataTable('transactions-table', {
+        columns: [
+          { key: 'transactionid', label: 'ID' },
+          { key: 'fullname', label: 'User' },
+          { key: 'transactiontype', label: 'Type', render: (v) => `<span class="badge ${v === 'TopUp' ? 'badge-active' : 'badge-in-progress'}">${v}</span>` },
+          { key: 'amountnpr', label: 'Amount', render: (v) => formatCurrency(v) },
+          { key: 'paymentmethod', label: 'Method', render: (v) => v || '-' },
+          { key: 'balancebeforenpr', label: 'Before', render: (v) => formatCurrency(v) },
+          { key: 'balanceafternpr', label: 'After', render: (v) => formatCurrency(v) },
+          { key: 'transactiontime', label: 'Date', render: (v) => formatDateTime(v) }
+        ],
+        emptyMessage: 'No transactions for selected period'
+      });
+    }
+
+    async function loadReport() {
+      const startDate = document.getElementById('start-date').value;
+      const endDate = document.getElementById('end-date').value;
+
+      if (currentTab === 'rides') {
+        ridesTable.setLoading(true);
+        const response = await api.getRideReports({ startDate, endDate });
+        if (response.success) {
+          currentData = response.data.rides || [];
+          ridesTable.setData(currentData);
+        } else {
+          Toast.error(response.error || 'Failed to load rides report');
+          ridesTable.setData([]);
+        }
+      } else if (currentTab === 'revenue') {
+        revenueTable.setLoading(true);
+        const groupBy = document.getElementById('revenue-groupby').value;
+        const response = await api.getRevenueReports({ startDate, endDate, groupBy });
+        if (response.success) {
+          currentData = response.data.revenue || [];
+          revenueTable.setData(currentData);
+        } else {
+          Toast.error(response.error || 'Failed to load revenue report');
+          revenueTable.setData([]);
+        }
+      } else if (currentTab === 'transactions') {
+        transactionsTable.setLoading(true);
+        const type = document.getElementById('transaction-type').value;
+        const response = await api.getTransactionReports({ startDate, endDate, type: type || undefined });
+        if (response.success) {
+          currentData = response.data.transactions || [];
+          transactionsTable.setData(currentData);
+        } else {
+          Toast.error(response.error || 'Failed to load transactions');
+          transactionsTable.setData([]);
+        }
+      }
+    }
+
+    function exportReport() {
+      if (currentData.length === 0) {
+        Toast.warning('No data to export');
+        return;
+      }
+
+      const filename = `sawari_${currentTab}_report`;
+      downloadCSV(currentData, filename);
+      Toast.success('Report exported');
+    }
+
+    init();
+  </script>
+</body>
+</html>
