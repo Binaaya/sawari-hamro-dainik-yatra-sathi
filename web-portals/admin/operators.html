@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Operators - Sawari Admin</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+  <link rel="stylesheet" href="../shared/css/common.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-container">
+    <div id="sidebar"></div>
+    <div class="main-content">
+      <div id="header"></div>
+      <div class="page-content">
+        <!-- Tabs -->
+        <div id="tabs-container"></div>
+
+        <!-- Pending Operators Section -->
+        <div id="pending-section">
+          <div id="pending-table"></div>
+        </div>
+
+        <!-- All Operators Section -->
+        <div id="all-section" style="display: none;">
+          <!-- Search & Filter -->
+          <div class="card" style="margin-bottom: 20px; padding: 16px;">
+            <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+              <input
+                type="text"
+                id="search-input"
+                class="form-input"
+                placeholder="Search by name or email..."
+                style="max-width: 300px;"
+              >
+              <select id="status-filter" class="form-select" style="max-width: 180px;">
+                <option value="">All Statuses</option>
+                <option value="true">Approved</option>
+                <option value="false">Pending</option>
+              </select>
+            </div>
+          </div>
+          <div id="all-table"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="../shared/js/firebase-init.js"></script>
+  <script type="module">
+    import { auth } from './assets/js/auth.js';
+    import { api } from './assets/js/api.js';
+    import { Sidebar } from './assets/js/components/sidebar.js';
+    import { Header } from './assets/js/components/header.js';
+    import { Tabs } from './assets/js/components/tabs.js';
+    import { DataTable } from './assets/js/components/table.js';
+    import { Modal } from './assets/js/components/modal.js';
+    import { Toast } from './assets/js/components/toast.js';
+    import { formatDateTime, getStatusBadgeClass, debounce, parseQueryParams } from './assets/js/utils.js';
+
+    let pendingTable, allTable, tabs, currentTab = 'pending';
+
+    async function init() {
+      const user = await auth.checkAuth();
+      if (!user) {
+        window.location.href = 'login.html';
+        return;
+      }
+
+      document.querySelector('.app-container').classList.add('authenticated');
+
+      new Sidebar('sidebar', 'operators');
+      const header = new Header('header', user);
+      header.setPageTitle('Operators');
+
+      // Check URL params
+      const params = parseQueryParams();
+      if (params.tab === 'all') currentTab = 'all';
+
+      // Initialize tabs
+      tabs = new Tabs('tabs-container', {
+        tabs: [
+          { id: 'pending', label: 'Pending Approvals', count: 0 },
+          { id: 'all', label: 'All Operators', count: 0 }
+        ],
+        activeTab: currentTab,
+        onChange: (tabId) => {
+          currentTab = tabId;
+          document.getElementById('pending-section').style.display = tabId === 'pending' ? 'block' : 'none';
+          document.getElementById('all-section').style.display = tabId === 'all' ? 'block' : 'none';
+          if (tabId === 'all') loadAllOperators();
+        }
+      });
+
+      // Initialize tables
+      initPendingTable();
+      initAllTable();
+
+      // Load data
+      loadPendingOperators();
+      loadAllOperators();
+      if (currentTab === 'all') {
+        document.getElementById('pending-section').style.display = 'none';
+        document.getElementById('all-section').style.display = 'block';
+        loadAllOperators();
+      }
+
+      // Search handler
+      document.getElementById('search-input').addEventListener('input', debounce(() => loadAllOperators(), 300));
+      document.getElementById('status-filter').addEventListener('change', () => loadAllOperators());
+    }
+
+    function initPendingTable() {
+      pendingTable = new DataTable('pending-table', {
+        columns: [
+          { key: 'operatorname', label: 'Company Name' },
+          { key: 'email', label: 'Email' },
+          { key: 'phonenumber', label: 'Phone' },
+          {
+            key: 'createdat',
+            label: 'Applied On',
+            render: (val) => formatDateTime(val)
+          },
+          {
+            key: 'documenturls',
+            label: 'Documents',
+            render: (val) => {
+              if (!val) return '<span class="text-gray-400">None</span>';
+              const docs = typeof val === 'string' ? JSON.parse(val) : val;
+              const count = Object.keys(docs).length;
+              return `<span class="badge badge-active">${count} file(s)</span>`;
+            }
+          }
+        ],
+        emptyMessage: 'No pending operator approvals',
+        rowActions: [
+          {
+            id: 'view',
+            label: 'View',
+            icon: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>',
+            class: 'btn-outline',
+            onClick: (row) => showOperatorDetails(row)
+          },
+          {
+            id: 'approve',
+            label: 'Approve',
+            icon: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>',
+            class: 'btn-primary',
+            onClick: (row) => approveOperator(row)
+          },
+          {
+            id: 'reject',
+            label: 'Reject',
+            icon: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>',
+            class: 'btn-danger',
+            onClick: (row) => rejectOperator(row)
+          }
+        ]
+      });
+    }
+
+    function initAllTable() {
+      allTable = new DataTable('all-table', {
+        columns: [
+          { key: 'operatorname', label: 'Company Name' },
+          { key: 'email', label: 'Email' },
+          { key: 'phonenumber', label: 'Phone' },
+          {
+            key: 'approvalstatus',
+            label: 'Status',
+            render: (val) => `<span class="badge ${getStatusBadgeClass(val)}">${val}</span>`
+          },
+          {
+            key: 'vehicle_count',
+            label: 'Vehicles',
+            render: (val) => val || 0
+          },
+          {
+            key: 'approvedat',
+            label: 'Approved On',
+            render: (val) => val ? formatDateTime(val) : '-'
+          }
+        ],
+        emptyMessage: 'No operators found',
+        rowActions: [
+          {
+            id: 'view',
+            label: 'View',
+            icon: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>',
+            class: 'btn-outline',
+            onClick: (row) => showOperatorDetails(row)
+          }
+        ]
+      });
+    }
+
+    async function loadPendingOperators() {
+      pendingTable.setLoading(true);
+      const response = await api.getPendingOperators();
+      if (response.success) {
+        const operators = response.data.operators || [];
+        pendingTable.setData(operators);
+        tabs.setCount('pending', operators.length);
+      } else {
+        Toast.error(response.error || 'Failed to load pending operators');
+        pendingTable.setData([]);
+      }
+    }
+
+    async function loadAllOperators() {
+      allTable.setLoading(true);
+      const search = document.getElementById('search-input').value;
+      const approved = document.getElementById('status-filter').value;
+
+      const params = {};
+      if (search) params.search = search;
+      if (approved) params.approved = approved;
+
+      const response = await api.getAllOperators(params);
+      if (response.success) {
+        const operators = response.data.operators || [];
+        allTable.setData(operators);
+        tabs.setCount('all', operators.length);
+      } else {
+        Toast.error(response.error || 'Failed to load operators');
+        allTable.setData([]);
+      }
+    }
+
+    function showOperatorDetails(operator) {
+      const docs = operator.documenturls ? (typeof operator.documenturls === 'string' ? JSON.parse(operator.documenturls) : operator.documenturls) : {};
+      const docLabels = { businessDocument: 'Business Document' };
+      const docList = Object.entries(docs).map(([key, url]) => {
+        const fullUrl = url.startsWith('http') ? url : `http://localhost:3000${url}`;
+        const label = docLabels[key] || key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        return `
+        <div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #F3F4F6;">
+          <span style="color: #6B7280;">${label}</span>
+          <a href="${fullUrl}" target="_blank" style="color: #10B981;">View</a>
+        </div>
+      `}).join('') || '<p style="color: #9CA3AF;">No documents uploaded</p>';
+
+      const modal = new Modal({
+        title: operator.operatorname,
+        size: 'md',
+        showFooter: false
+      });
+
+      modal.setContent(`
+        <div style="space-y: 4;">
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px;">
+            <div>
+              <p style="font-size: 12px; color: #6B7280;">Email</p>
+              <p style="font-weight: 500;">${operator.email || '-'}</p>
+            </div>
+            <div>
+              <p style="font-size: 12px; color: #6B7280;">Phone</p>
+              <p style="font-weight: 500;">${operator.phonenumber || '-'}</p>
+            </div>
+            <div>
+              <p style="font-size: 12px; color: #6B7280;">Status</p>
+              <span class="badge ${getStatusBadgeClass(operator.approvalstatus)}">${operator.approvalstatus}</span>
+            </div>
+            <div>
+              <p style="font-size: 12px; color: #6B7280;">Vehicles</p>
+              <p style="font-weight: 500;">${operator.vehicle_count || 0}</p>
+            </div>
+          </div>
+          <div>
+            <p style="font-size: 14px; font-weight: 600; margin-bottom: 12px;">Documents</p>
+            ${docList}
+          </div>
+        </div>
+      `);
+
+      modal.open();
+    }
+
+    async function approveOperator(operator) {
+      Modal.confirm(
+        'Approve Operator',
+        `Are you sure you want to approve "${operator.operatorname}"?`,
+        async () => {
+          const response = await api.approveOperator(operator.operatorid);
+          if (response.success) {
+            Toast.success('Operator approved successfully');
+            loadPendingOperators();
+          } else {
+            Toast.error(response.error || 'Failed to approve operator');
+          }
+        }
+      );
+    }
+
+    function rejectOperator(operator) {
+      const modal = new Modal({
+        title: 'Reject Operator',
+        size: 'sm',
+        confirmText: 'Reject',
+        confirmClass: 'btn-danger',
+        onConfirm: async () => {
+          const reason = document.getElementById('reject-reason').value;
+          modal.setLoading(true);
+          const response = await api.rejectOperator(operator.operatorid, reason);
+          if (response.success) {
+            Toast.success('Operator rejected');
+            modal.close();
+            loadPendingOperators();
+          } else {
+            Toast.error(response.error || 'Failed to reject operator');
+            modal.setLoading(false);
+          }
+        }
+      });
+
+      modal.setContent(`
+        <p style="margin-bottom: 16px; color: #4B5563;">
+          Reject "${operator.operatorname}"? This will remove their registration.
+        </p>
+        <div class="form-group">
+          <label class="form-label">Reason (optional)</label>
+          <textarea id="reject-reason" class="form-textarea" rows="3" placeholder="Enter rejection reason..."></textarea>
+        </div>
+      `);
+
+      modal.open();
+    }
+
+    init();
+  </script>
+</body>
+</html>

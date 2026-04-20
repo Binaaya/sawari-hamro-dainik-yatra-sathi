@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vehicles - Sawari Admin</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+  <link rel="stylesheet" href="../shared/css/common.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-container">
+    <div id="sidebar"></div>
+    <div class="main-content">
+      <div id="header"></div>
+      <div class="page-content">
+        <div id="tabs-container"></div>
+
+        <!-- Pending Vehicles -->
+        <div id="pending-section">
+          <div id="pending-table"></div>
+        </div>
+
+        <!-- All Vehicles -->
+        <div id="all-section" style="display: none;">
+          <div class="card" style="margin-bottom: 20px; padding: 16px;">
+            <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+              <input type="text" id="search-input" class="form-input" placeholder="Search by registration..." style="max-width: 250px;">
+              <select id="operator-filter" class="form-select" style="max-width: 200px;">
+                <option value="">All Operators</option>
+              </select>
+              <select id="status-filter" class="form-select" style="max-width: 150px;">
+                <option value="">All Statuses</option>
+                <option value="true">Approved</option>
+                <option value="false">Pending</option>
+              </select>
+            </div>
+          </div>
+          <div id="all-table"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="../shared/js/firebase-init.js"></script>
+  <script type="module">
+    import { auth } from './assets/js/auth.js';
+    import { api } from './assets/js/api.js';
+    import { Sidebar } from './assets/js/components/sidebar.js';
+    import { Header } from './assets/js/components/header.js';
+    import { Tabs } from './assets/js/components/tabs.js';
+    import { DataTable } from './assets/js/components/table.js';
+    import { Modal } from './assets/js/components/modal.js';
+    import { Toast } from './assets/js/components/toast.js';
+    import { formatDateTime, getStatusBadgeClass, debounce, parseQueryParams } from './assets/js/utils.js';
+
+    let pendingTable, allTable, tabs, currentTab = 'pending';
+
+    async function init() {
+      const user = await auth.checkAuth();
+      if (!user) { window.location.href = 'login.html'; return; }
+      document.querySelector('.app-container').classList.add('authenticated');
+
+      new Sidebar('sidebar', 'vehicles');
+      const header = new Header('header', user);
+      header.setPageTitle('Vehicles');
+
+      const params = parseQueryParams();
+      if (params.tab === 'all') currentTab = 'all';
+
+      tabs = new Tabs('tabs-container', {
+        tabs: [
+          { id: 'pending', label: 'Pending Approvals', count: 0 },
+          { id: 'all', label: 'All Vehicles', count: 0 }
+        ],
+        activeTab: currentTab,
+        onChange: (tabId) => {
+          currentTab = tabId;
+          document.getElementById('pending-section').style.display = tabId === 'pending' ? 'block' : 'none';
+          document.getElementById('all-section').style.display = tabId === 'all' ? 'block' : 'none';
+          if (tabId === 'all') loadAllVehicles();
+        }
+      });
+
+      initTables();
+      loadPendingVehicles();
+      loadAllVehicles();
+      loadOperatorFilter();
+
+      if (currentTab === 'all') {
+        document.getElementById('pending-section').style.display = 'none';
+        document.getElementById('all-section').style.display = 'block';
+        loadAllVehicles();
+      }
+
+      document.getElementById('search-input').addEventListener('input', debounce(() => loadAllVehicles(), 300));
+      document.getElementById('operator-filter').addEventListener('change', () => loadAllVehicles());
+      document.getElementById('status-filter').addEventListener('change', () => loadAllVehicles());
+    }
+
+    function initTables() {
+      const columns = [
+        { key: 'registrationnumber', label: 'Registration No.' },
+        { key: 'vehicletype', label: 'Type' },
+        { key: 'seatingcapacity', label: 'Capacity' },
+        { key: 'modelyear', label: 'Year', render: (v) => v || '<span class="text-gray-400">N/A</span>' },
+        { key: 'operatorname', label: 'Operator' },
+        { key: 'driver_name', label: 'Driver', render: (v) => v || '<span class="text-gray-400">Unassigned</span>' },
+        { key: 'approvalstatus', label: 'Status', render: (v) => `<span class="badge ${getStatusBadgeClass(v)}">${v}</span>` },
+        { key: 'documenturls', label: 'Docs', render: (v) => {
+          if (!v || Object.keys(v).length === 0) return '<span class="text-gray-400">None</span>';
+          return `<button class="btn btn-sm btn-outline" onclick="window._viewDocs(${JSON.stringify(v).replace(/"/g, '&quot;')})">View (${Object.keys(v).length})</button>`;
+        }}
+      ];
+
+      pendingTable = new DataTable('pending-table', {
+        columns,
+        emptyMessage: 'No pending vehicle approvals',
+        rowActions: [
+          { id: 'approve', label: 'Approve', class: 'btn-primary', onClick: (row) => approveVehicle(row) },
+          { id: 'reject', label: 'Reject', class: 'btn-danger', onClick: (row) => rejectVehicle(row) }
+        ]
+      });
+
+      allTable = new DataTable('all-table', {
+        columns: [...columns, { key: 'createdat', label: 'Added', render: (v) => formatDateTime(v) }],
+        emptyMessage: 'No vehicles found'
+      });
+    }
+
+    // Global function for viewing documents from table button
+    window._viewDocs = function(docs) {
+      const SERVER_URL = 'http://localhost:3000';
+      const docLabels = { bluebook: 'Bluebook', insurance: 'Insurance', registration: 'Registration' };
+      const entries = Object.entries(docs);
+      let currentIdx = 0;
+
+      const modal = new Modal({ title: docLabels[entries[0][0]] || entries[0][0], size: 'xl', showFooter: false });
+
+      function renderDoc(idx) {
+        const [key, url] = entries[idx];
+        const fullUrl = url.startsWith('http') ? url : `${SERVER_URL}${url}`;
+        const label = docLabels[key] || key;
+        const isPdf = fullUrl.toLowerCase().endsWith('.pdf');
+
+        modal.setTitle(label + (entries.length > 1 ? ` (${idx + 1}/${entries.length})` : ''));
+
+        let html = '<div style="display:flex; flex-direction:column; height:70vh;">';
+
+        // Navigation + Open button bar
+        html += '<div style="display:flex; justify-content:space-between; align-items:center; padding:0 0 12px; flex-shrink:0;">';
+        if (entries.length > 1) {
+          html += `<div style="display:flex; gap:8px;">`;
+          html += `<button class="btn btn-sm btn-outline" id="_doc_prev" ${idx === 0 ? 'disabled style="opacity:0.4;cursor:default;"' : ''}>← Prev</button>`;
+          html += `<button class="btn btn-sm btn-outline" id="_doc_next" ${idx === entries.length - 1 ? 'disabled style="opacity:0.4;cursor:default;"' : ''}>Next →</button>`;
+          html += `</div>`;
+        } else {
+          html += '<div></div>';
+        }
+        html += `<a href="${fullUrl}" target="_blank" class="btn btn-sm btn-primary" style="display:inline-flex; align-items:center; gap:6px; text-decoration:none;">
+          <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+          Open in new tab</a>`;
+        html += '</div>';
+
+        // Document display
+        if (isPdf) {
+          html += `<iframe src="${fullUrl}" style="flex:1; width:100%; border:1px solid #E5E7EB; border-radius:8px;" frameborder="0"></iframe>`;
+        } else {
+          html += `<div style="flex:1; display:flex; align-items:center; justify-content:center; background:#F9FAFB; border-radius:8px; border:1px solid #E5E7EB; overflow:hidden;">
+            <img src="${fullUrl}" alt="${label}" style="max-width:100%; max-height:100%; object-fit:contain;" />
+          </div>`;
+        }
+
+        html += '</div>';
+        modal.setContent(html);
+
+        // Bind nav buttons
+        if (entries.length > 1) {
+          const prev = document.getElementById('_doc_prev');
+          const next = document.getElementById('_doc_next');
+          if (prev && idx > 0) prev.onclick = () => { currentIdx--; renderDoc(currentIdx); };
+          if (next && idx < entries.length - 1) next.onclick = () => { currentIdx++; renderDoc(currentIdx); };
+        }
+      }
+
+      renderDoc(0);
+      modal.open();
+    };
+
+    async function loadOperatorFilter() {
+      const response = await api.getAllOperators({ approved: 'true' });
+      if (response.success) {
+        const select = document.getElementById('operator-filter');
+        (response.data.operators || []).forEach(op => {
+          select.innerHTML += `<option value="${op.operatorid}">${op.operatorname}</option>`;
+        });
+      }
+    }
+
+    async function loadPendingVehicles() {
+      pendingTable.setLoading(true);
+      const response = await api.getPendingVehicles();
+      if (response.success) {
+        const vehicles = response.data.vehicles || [];
+        pendingTable.setData(vehicles);
+        tabs.setCount('pending', vehicles.length);
+      } else {
+        Toast.error(response.error || 'Failed to load pending vehicles');
+        pendingTable.setData([]);
+      }
+    }
+
+    async function loadAllVehicles() {
+      allTable.setLoading(true);
+      const params = {};
+      const search = document.getElementById('search-input').value;
+      const operatorId = document.getElementById('operator-filter').value;
+      const approved = document.getElementById('status-filter').value;
+
+      if (search) params.search = search;
+      if (operatorId) params.operator_id = operatorId;
+      if (approved) params.approved = approved;
+
+      const response = await api.getAllVehicles(params);
+      if (response.success) {
+        const vehicles = response.data.vehicles || [];
+        allTable.setData(vehicles);
+        tabs.setCount('all', vehicles.length);
+      } else {
+        Toast.error(response.error || 'Failed to load vehicles');
+        allTable.setData([]);
+      }
+    }
+
+
+
+    async function approveVehicle(vehicle) {
+      Modal.confirm('Approve Vehicle', `Approve vehicle "${vehicle.registrationnumber}"?`, async () => {
+        const response = await api.approveVehicle(vehicle.vehicleid);
+        if (response.success) {
+          Toast.success('Vehicle approved');
+          loadPendingVehicles();
+        } else {
+          Toast.error(response.error || 'Failed to approve vehicle');
+        }
+      });
+    }
+
+    function rejectVehicle(vehicle) {
+      const modal = new Modal({
+        title: 'Reject Vehicle',
+        size: 'sm',
+        confirmText: 'Reject',
+        confirmClass: 'btn-danger',
+        onConfirm: async () => {
+          const reason = document.getElementById('reject-reason').value;
+          modal.setLoading(true);
+          const response = await api.rejectVehicle(vehicle.vehicleid, reason);
+          if (response.success) {
+            Toast.success('Vehicle rejected');
+            modal.close();
+            loadPendingVehicles();
+          } else {
+            Toast.error(response.error || 'Failed to reject vehicle');
+            modal.setLoading(false);
+          }
+        }
+      });
+      modal.setContent(`
+        <p style="margin-bottom: 16px; color: #4B5563;">Reject vehicle "${vehicle.registrationnumber}"?</p>
+        <div class="form-group">
+          <label class="form-label">Reason (optional)</label>
+          <textarea id="reject-reason" class="form-textarea" rows="3" placeholder="Enter rejection reason..."></textarea>
+        </div>
+      `);
+      modal.open();
+    }
+
+    init();
+  </script>
+</body>
+</html>
