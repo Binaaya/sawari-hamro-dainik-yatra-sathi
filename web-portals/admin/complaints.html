@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Complaints - Sawari Admin</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+  <link rel="stylesheet" href="../shared/css/common.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-container">
+    <div id="sidebar"></div>
+    <div class="main-content">
+      <div id="header"></div>
+      <div class="page-content">
+        <div id="tabs-container"></div>
+        <div id="complaints-table"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="../shared/js/firebase-init.js"></script>
+  <script type="module">
+    import { auth } from './assets/js/auth.js';
+    import { api } from './assets/js/api.js';
+    import { Sidebar } from './assets/js/components/sidebar.js';
+    import { Header } from './assets/js/components/header.js';
+    import { Tabs } from './assets/js/components/tabs.js';
+    import { DataTable } from './assets/js/components/table.js';
+    import { Modal } from './assets/js/components/modal.js';
+    import { Toast } from './assets/js/components/toast.js';
+    import { formatDateTime, getStatusBadgeClass, truncateText, parseQueryParams } from './assets/js/utils.js';
+
+    let table, currentStatus = '';
+
+    async function init() {
+      const user = await auth.checkAuth();
+      if (!user) { window.location.href = 'login.html'; return; }
+      document.querySelector('.app-container').classList.add('authenticated');
+
+      new Sidebar('sidebar', 'complaints');
+      const header = new Header('header', user);
+      header.setPageTitle('Complaints');
+
+      const params = parseQueryParams();
+      if (params.status) currentStatus = params.status;
+
+      new Tabs('tabs-container', {
+        tabs: [
+          { id: '', label: 'All' },
+          { id: 'Pending', label: 'Pending' },
+          { id: 'InProgress', label: 'In Progress' },
+          { id: 'Resolved', label: 'Resolved' },
+          { id: 'Rejected', label: 'Rejected' }
+        ],
+        activeTab: currentStatus,
+        onChange: (tabId) => {
+          currentStatus = tabId;
+          loadComplaints();
+        }
+      });
+
+      initTable();
+      loadComplaints();
+    }
+
+    function initTable() {
+      table = new DataTable('complaints-table', {
+        columns: [
+          { key: 'complaintid', label: 'ID', width: '60px' },
+          { key: 'passenger_name', label: 'Passenger' },
+          {
+            key: 'complainttext',
+            label: 'Complaint',
+            render: (v) => `<span title="${v}">${truncateText(v, 60)}</span>`
+          },
+          {
+            key: 'routename',
+            label: 'Route',
+            render: (v) => v || '<span class="text-gray-400">N/A</span>'
+          },
+          {
+            key: 'complaintstatus',
+            label: 'Status',
+            render: (v) => `<span class="badge ${getStatusBadgeClass(v)}">${v}</span>`
+          },
+          { key: 'complaintdate', label: 'Filed On', render: (v) => formatDateTime(v) }
+        ],
+        emptyMessage: 'No complaints found',
+        rowActions: [
+          {
+            id: 'view',
+            label: 'View',
+            icon: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/></svg>',
+            class: 'btn-outline',
+            onClick: (row) => showComplaintDetails(row)
+          },
+          {
+            id: 'resolve',
+            label: 'Update',
+            icon: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>',
+            class: 'btn-primary',
+            onClick: (row) => showUpdateModal(row)
+          }
+        ]
+      });
+    }
+
+    async function loadComplaints() {
+      table.setLoading(true);
+      const params = {};
+      if (currentStatus) params.status = currentStatus;
+
+      const response = await api.getComplaints(params);
+      if (response.success) {
+        table.setData(response.data.complaints || []);
+      } else {
+        Toast.error(response.error || 'Failed to load complaints');
+        table.setData([]);
+      }
+    }
+
+    async function showComplaintDetails(complaint) {
+      const response = await api.getComplaint(complaint.complaintid);
+      if (!response.success) {
+        Toast.error('Failed to load complaint details');
+        return;
+      }
+
+      const c = response.data.complaint;
+      const modal = new Modal({ title: `Complaint #${c.complaintid}`, size: 'lg', showFooter: false });
+
+      modal.setContent(`
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px;">
+          <div>
+            <h4 style="font-weight: 600; margin-bottom: 12px;">Complaint Details</h4>
+            <p style="font-size: 14px; color: #4B5563; line-height: 1.6; margin-bottom: 16px; background: #F9FAFB; padding: 12px; border-radius: 8px;">
+              ${c.complainttext}
+            </p>
+            <div style="font-size: 14px;">
+              <p><span style="color: #6B7280;">Status:</span> <span class="badge ${getStatusBadgeClass(c.complaintstatus)}">${c.complaintstatus}</span></p>
+              <p><span style="color: #6B7280;">Filed:</span> ${formatDateTime(c.complaintdate)}</p>
+              ${c.resolvedat ? `<p><span style="color: #6B7280;">Resolved:</span> ${formatDateTime(c.resolvedat)}</p>` : ''}
+              ${c.resolutionnotes ? `<p style="margin-top: 12px;"><span style="color: #6B7280;">Resolution:</span><br>${c.resolutionnotes}</p>` : ''}
+            </div>
+          </div>
+          <div>
+            <h4 style="font-weight: 600; margin-bottom: 12px;">Passenger & Ride Info</h4>
+            <div style="font-size: 14px;">
+              <p><span style="color: #6B7280;">Passenger:</span> ${c.passenger_name || '-'}</p>
+              <p><span style="color: #6B7280;">Phone:</span> ${c.passenger_phone || '-'}</p>
+              <p><span style="color: #6B7280;">Email:</span> ${c.passenger_email || '-'}</p>
+              ${c.rideid ? `
+                <hr style="margin: 12px 0; border-color: #E5E7EB;">
+                <p><span style="color: #6B7280;">Route:</span> ${c.routename || '-'}</p>
+                <p><span style="color: #6B7280;">Entry Stop:</span> ${c.entry_stop || '-'}</p>
+                <p><span style="color: #6B7280;">Exit Stop:</span> ${c.exit_stop || '-'}</p>
+                <p><span style="color: #6B7280;">Ride Date:</span> ${formatDateTime(c.entrytime)}</p>
+              ` : '<p style="color: #9CA3AF; margin-top: 12px;">No ride linked to this complaint</p>'}
+            </div>
+          </div>
+        </div>
+      `);
+
+      modal.open();
+    }
+
+    function showUpdateModal(complaint) {
+      const modal = new Modal({
+        title: 'Update Complaint Status',
+        size: 'md',
+        confirmText: 'Update',
+        onConfirm: async () => {
+          const status = document.getElementById('status-select').value;
+          const resolution = document.getElementById('resolution-notes').value;
+
+          if (!status) {
+            Toast.error('Please select a status');
+            return;
+          }
+
+          modal.setLoading(true);
+          const response = await api.updateComplaint(complaint.complaintid, status, resolution);
+          if (response.success) {
+            Toast.success('Complaint updated');
+            modal.close();
+            loadComplaints();
+          } else {
+            Toast.error(response.error || 'Failed to update complaint');
+            modal.setLoading(false);
+          }
+        }
+      });
+
+      modal.setContent(`
+        <p style="margin-bottom: 16px; color: #4B5563; background: #F9FAFB; padding: 12px; border-radius: 8px; font-size: 14px;">
+          "${truncateText(complaint.complainttext, 100)}"
+        </p>
+        <div class="form-group">
+          <label class="form-label">Status *</label>
+          <select id="status-select" class="form-select">
+            <option value="">Select status...</option>
+            <option value="Pending" ${complaint.complaintstatus === 'Pending' ? 'selected' : ''}>Pending</option>
+            <option value="InProgress" ${complaint.complaintstatus === 'InProgress' ? 'selected' : ''}>In Progress</option>
+            <option value="Resolved" ${complaint.complaintstatus === 'Resolved' ? 'selected' : ''}>Resolved</option>
+            <option value="Rejected" ${complaint.complaintstatus === 'Rejected' ? 'selected' : ''}>Rejected</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Resolution Notes</label>
+          <textarea id="resolution-notes" class="form-textarea" rows="4" placeholder="Add resolution notes...">${complaint.resolutionnotes || ''}</textarea>
+        </div>
+      `);
+
+      modal.open();
+    }
+
+    init();
+  </script>
+</body>
+</html>
