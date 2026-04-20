@@ -1,0 +1,52 @@
+name: sawari
+description: "Sawari - Your Digital Transit Companion"
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.5.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+
+  # Firebase
+  firebase_core: ^3.8.1
+  firebase_auth: ^5.3.4
+  firebase_messaging: ^15.1.6
+
+  # Local notifications
+  flutter_local_notifications: ^18.0.1
+
+  # HTTP client
+  http: ^1.2.2
+
+  # State management
+  provider: ^6.1.2
+
+  # Date formatting
+  intl: ^0.19.0
+  khalti_checkout_flutter: ^1.0.0-dev.9
+  file_picker: ^11.0.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+
+  # To add assets to your application, add an assets section:
+  # assets:
+  #   - images/
+  #   - assets/icons/
+
+  # To add custom fonts, add a fonts section:
+  # fonts:
+  #   - family: Schyler
+  #     fonts:
+  #       - asset: fonts/Schyler-Regular.ttf
+  #       - asset: fonts/Schyler-Italic.ttf
+  #         style: italic
