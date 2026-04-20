@@ -39,4 +39,5 @@ function createUpload(subfolder) {
 module.exports = {
   vehicleUpload: createUpload('vehicles'),
   operatorUpload: createUpload('operators'),
+  passengerUpload: createUpload('passengers'),
 };

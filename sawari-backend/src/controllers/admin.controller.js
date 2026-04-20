@@ -397,7 +397,7 @@ const getPassengers = asyncHandler(async (req, res) => {
 
   const result = await db.query(
     `SELECT p.passengerid, p.accountbalancenpr, p.rfidcardid, p.fullname,
-            p.address, p.citizenshipnumber,
+            p.address, p.citizenshipnumber, p.profilepicture,
             u.userid, u.email, u.phonenumber, u.createdat,
             rc.carduid
      FROM passengers p
@@ -463,6 +463,56 @@ const getPassenger = asyncHandler(async (req, res) => {
       recentRides: ridesResult.rows,
       recentTransactions: transactionsResult.rows
     }
+  });
+});
+
+/**
+ * Update passenger details
+ * PUT /api/admin/passengers/:id
+ */
+const updatePassenger = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { fullname, address } = req.body;
+
+  // Check passenger exists
+  const existing = await db.query(
+    'SELECT passengerid FROM passengers WHERE passengerid = $1',
+    [id]
+  );
+  if (existing.rows.length === 0) {
+    throw new ApiError(404, 'Passenger not found');
+  }
+
+  const updates = [];
+  const params = [];
+
+  if (fullname !== undefined) {
+    params.push(fullname);
+    updates.push(`fullname = $${params.length}`);
+  }
+  if (address !== undefined) {
+    params.push(address);
+    updates.push(`address = $${params.length}`);
+  }
+  if (req.file) {
+    params.push(`/uploads/passengers/${req.file.filename}`);
+    updates.push(`profilepicture = $${params.length}`);
+  }
+
+  if (updates.length === 0) {
+    throw new ApiError(400, 'No fields to update');
+  }
+
+  params.push(id);
+  const result = await db.query(
+    `UPDATE passengers SET ${updates.join(', ')} WHERE passengerid = $${params.length} RETURNING *`,
+    params
+  );
+
+  res.json({
+    success: true,
+    message: 'Passenger updated successfully',
+    data: { passenger: result.rows[0] }
   });
 });
 
@@ -1281,6 +1331,7 @@ module.exports = {
   deleteRfidCard,
   getPassengers,
   getPassenger,
+  updatePassenger,
   topUpPassenger,
   getComplaints,
   getComplaint,

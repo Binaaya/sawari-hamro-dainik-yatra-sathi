@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const adminController = require('../controllers/admin.controller');
 const { authenticate, requireRole } = require('../middleware/auth');
+const { passengerUpload } = require('../middleware/upload');
 
 // All routes require authentication and Admin role
 router.use(authenticate);
@@ -56,6 +57,9 @@ router.get('/passengers', adminController.getPassengers);
 
 // GET /api/admin/passengers/:id - Get passenger details
 router.get('/passengers/:id', adminController.getPassenger);
+
+// PUT /api/admin/passengers/:id - Update passenger details
+router.put('/passengers/:id', passengerUpload.single('profilepicture'), adminController.updatePassenger);
 
 // POST /api/admin/passengers/:id/topup - Cash top-up for passenger
 router.post('/passengers/:id/topup', adminController.topUpPassenger);

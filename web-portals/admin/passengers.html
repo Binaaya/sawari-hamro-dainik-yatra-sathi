@@ -91,6 +91,13 @@
             onClick: (row) => showPassengerDetails(row)
           },
           {
+            id: 'edit',
+            label: 'Edit',
+            icon: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>',
+            class: 'btn-outline',
+            onClick: (row) => showEditModal(row)
+          },
+          {
             id: 'topup',
             label: 'Top Up',
             icon: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>',
@@ -140,9 +147,15 @@
 
       const modal = new Modal({ title: p.fullname, size: 'lg', showFooter: false });
 
+      const photoUrl = p.profilepicture ? `http://localhost:3000${p.profilepicture}` : null;
+      const photoHtml = photoUrl
+        ? `<img src="${photoUrl}" alt="Profile" style="width: 80px; height: 80px; border-radius: 50%; object-fit: cover; margin-bottom: 12px;">`
+        : `<div style="width: 80px; height: 80px; border-radius: 50%; background: #E5E7EB; display: flex; align-items: center; justify-content: center; margin-bottom: 12px; color: #9CA3AF; font-size: 28px; font-weight: 600;">${(p.fullname || '?')[0].toUpperCase()}</div>`;
+
       modal.setContent(`
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px;">
           <div>
+            ${photoHtml}
             <h4 style="font-weight: 600; margin-bottom: 12px;">Details</h4>
             <div style="font-size: 14px; space-y: 2;">
               <p><span style="color: #6B7280;">Email:</span> ${p.email || '-'}</p>
@@ -249,6 +262,84 @@
       `);
 
       modal.open();
+    }
+
+    function showEditModal(passenger) {
+      const photoUrl = passenger.profilepicture ? `http://localhost:3000${passenger.profilepicture}` : null;
+
+      const modal = new Modal({
+        title: `Edit ${passenger.fullname}`,
+        size: 'sm',
+        confirmText: 'Save Changes',
+        onConfirm: async () => {
+          const fullname = document.getElementById('edit-fullname').value.trim();
+          const address = document.getElementById('edit-address').value.trim();
+          const fileInput = document.getElementById('edit-picture');
+
+          if (!fullname) {
+            Toast.error('Name is required');
+            return;
+          }
+
+          const formData = new FormData();
+          formData.append('fullname', fullname);
+          formData.append('address', address);
+          if (fileInput.files.length > 0) {
+            formData.append('profilepicture', fileInput.files[0]);
+          }
+
+          modal.setLoading(true);
+          const response = await api.updatePassenger(passenger.passengerid, formData);
+          if (response.success) {
+            Toast.success('Passenger updated successfully');
+            modal.close();
+            loadPassengers();
+          } else {
+            Toast.error(response.error || 'Failed to update passenger');
+            modal.setLoading(false);
+          }
+        }
+      });
+
+      modal.setContent(`
+        <div style="text-align: center; margin-bottom: 16px;">
+          ${photoUrl
+            ? `<img id="edit-preview" src="${photoUrl}" alt="Profile" style="width: 80px; height: 80px; border-radius: 50%; object-fit: cover; margin: 0 auto 8px;">`
+            : `<div id="edit-preview" style="width: 80px; height: 80px; border-radius: 50%; background: #E5E7EB; display: flex; align-items: center; justify-content: center; margin: 0 auto 8px; color: #9CA3AF; font-size: 28px; font-weight: 600;">${(passenger.fullname || '?')[0].toUpperCase()}</div>`
+          }
+        </div>
+        <div class="form-group">
+          <label class="form-label">Name *</label>
+          <input type="text" id="edit-fullname" class="form-input" value="${passenger.fullname || ''}" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Address</label>
+          <input type="text" id="edit-address" class="form-input" value="${passenger.address || ''}" placeholder="Enter address">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Profile Picture</label>
+          <input type="file" id="edit-picture" class="form-input" accept="image/jpeg,image/png,image/jpg">
+          <p style="font-size: 12px; color: #6B7280; margin-top: 4px;">JPG or PNG, max 5MB</p>
+        </div>
+      `);
+
+      // Preview selected image
+      modal.open();
+      document.getElementById('edit-picture').addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = (ev) => {
+            const preview = document.getElementById('edit-preview');
+            if (preview.tagName === 'IMG') {
+              preview.src = ev.target.result;
+            } else {
+              preview.outerHTML = `<img id="edit-preview" src="${ev.target.result}" alt="Preview" style="width: 80px; height: 80px; border-radius: 50%; object-fit: cover; margin: 0 auto 8px;">`;
+            }
+          };
+          reader.readAsDataURL(file);
+        }
+      });
     }
 
     init();

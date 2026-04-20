@@ -89,6 +89,26 @@ class ApiService {
   }
 
   /**
+   * Perform a PUT request with FormData (for file uploads).
+   */
+  async putFormData(endpoint, formData) {
+    try {
+      const headers = {};
+      if (this.authToken) {
+        headers['Authorization'] = `Bearer ${this.authToken}`;
+      }
+      const response = await fetch(`${this.baseUrl}${endpoint}`, {
+        method: 'PUT',
+        headers,
+        body: formData
+      });
+      return this.handleResponse(response);
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
    * Perform a DELETE request to the given endpoint.
    */
   async delete(endpoint) {
@@ -179,6 +199,10 @@ class ApiService {
 
   async getPassenger(passengerId) {
     return this.get(`/admin/passengers/${passengerId}`);
+  }
+
+  async updatePassenger(passengerId, formData) {
+    return this.putFormData(`/admin/passengers/${passengerId}`, formData);
   }
 
   async topUpPassenger(passengerId, amount, receiptNumber = null) {
