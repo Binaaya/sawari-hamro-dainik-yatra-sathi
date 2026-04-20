@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard - Sawari Admin</title>
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+
+  <!-- Shared Styles -->
+  <link rel="stylesheet" href="../shared/css/common.css">
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Sidebar -->
+    <div id="sidebar"></div>
+
+    <!-- Main Content -->
+    <div class="main-content">
+      <!-- Header -->
+      <div id="header"></div>
+
+      <!-- Page Content -->
+      <div class="page-content">
+        <!-- Stats Grid -->
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-bottom: 32px;">
+          <div id="stat-passengers"></div>
+          <div id="stat-operators"></div>
+          <div id="stat-vehicles"></div>
+          <div id="stat-rides"></div>
+          <div id="stat-revenue"></div>
+          <div id="stat-complaints"></div>
+        </div>
+
+        <!-- Quick Actions -->
+        <div class="card" style="margin-bottom: 24px;">
+          <h3 style="font-size: 16px; font-weight: 600; color: #111827; margin: 0 0 16px 0;">Pending Approvals</h3>
+          <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+            <a href="operators.html?tab=pending" class="btn btn-outline" id="pending-operators-btn">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 8px;">
+                <path d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/>
+              </svg>
+              <span id="pending-operators-count">0</span> Operators
+            </a>
+            <a href="vehicles.html?tab=pending" class="btn btn-outline" id="pending-vehicles-btn">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 8px;">
+                <path d="M9 17a2 2 0 11-4 0 2 2 0 014 0zM19 17a2 2 0 11-4 0 2 2 0 014 0z"/>
+                <path d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1M5 17a2 2 0 104 0m-4 0a2 2 0 114 0m6 0a2 2 0 104 0m-4 0a2 2 0 114 0"/>
+              </svg>
+              <span id="pending-vehicles-count">0</span> Vehicles
+            </a>
+            <a href="complaints.html?status=Pending" class="btn btn-outline" id="pending-complaints-btn">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 8px;">
+                <path d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
+              </svg>
+              <span id="pending-complaints-count">0</span> Complaints
+            </a>
+          </div>
+        </div>
+
+        <!-- Recent Activity -->
+        <div class="card">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+              <h3 style="font-size: 16px; font-weight: 600; color: #111827; margin: 0;">Today's Activity</h3>
+              <a href="reports.html" style="font-size: 13px; color: #10B981; text-decoration: none;">View Reports →</a>
+            </div>
+            <div id="today-stats">
+              <div style="display: flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid #F3F4F6;">
+                <span style="color: #6B7280;">Rides Today</span>
+                <span id="rides-today" style="font-weight: 600; color: #111827;">-</span>
+              </div>
+              <div style="display: flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid #F3F4F6;">
+                <span style="color: #6B7280;">Revenue Today</span>
+                <span id="revenue-today" style="font-weight: 600; color: #10B981;">-</span>
+              </div>
+              <div style="display: flex; justify-content: space-between; padding: 12px 0;">
+                <span style="color: #6B7280;">New Passengers</span>
+                <span id="new-passengers" style="font-weight: 600; color: #111827;">-</span>
+              </div>
+            </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Firebase Init -->
+  <script src="../shared/js/firebase-init.js"></script>
+
+  <script type="module">
+    import { auth } from './assets/js/auth.js';
+    import { api } from './assets/js/api.js';
+    import { Sidebar } from './assets/js/components/sidebar.js';
+    import { Header } from './assets/js/components/header.js';
+    import { StatsCard } from './assets/js/components/stats-card.js';
+    import { Toast } from './assets/js/components/toast.js';
+    import { formatCurrency } from './assets/js/utils.js';
+
+    // Initialize page
+    async function init() {
+      // Check authentication
+      const user = await auth.checkAuth();
+      if (!user) {
+        window.location.href = 'login.html';
+        return;
+      }
+
+      // Show page content after auth
+      document.querySelector('.app-container').classList.add('authenticated');
+
+      // Initialize components
+      new Sidebar('sidebar', 'dashboard');
+      const header = new Header('header', user);
+      header.setPageTitle('Dashboard');
+
+      // Load dashboard data
+      loadDashboardData();
+    }
+
+    // Load dashboard statistics
+    async function loadDashboardData() {
+      try {
+        const response = await api.getDashboard();
+
+        if (response.success) {
+          const data = response.data;
+
+          // Create stats cards
+          new StatsCard('stat-passengers', {
+            label: 'Total Passengers',
+            value: data.totalPassengers || 0,
+            icon: 'users',
+            color: 'emerald'
+          });
+
+          new StatsCard('stat-operators', {
+            label: 'Operators',
+            value: data.totalOperators || 0,
+            icon: 'building',
+            color: 'blue',
+            subLabel: 'Pending:',
+            subValue: data.pendingOperators || 0
+          });
+
+          new StatsCard('stat-vehicles', {
+            label: 'Vehicles',
+            value: data.totalVehicles || 0,
+            icon: 'truck',
+            color: 'purple',
+            subLabel: 'Approved:',
+            subValue: data.approvedVehicles || 0
+          });
+
+          new StatsCard('stat-rides', {
+            label: 'Total Rides',
+            value: data.totalRides || 0,
+            icon: 'ticket',
+            color: 'orange',
+            subLabel: 'Today:',
+            subValue: data.todayRides || 0
+          });
+
+          new StatsCard('stat-revenue', {
+            label: 'Total Revenue',
+            value: data.totalRevenue || 0,
+            icon: 'currency',
+            color: 'emerald',
+            isCurrency: true,
+            subLabel: 'Today:',
+            subValue: formatCurrency(data.todayRevenue || 0)
+          });
+
+          new StatsCard('stat-complaints', {
+            label: 'Complaints',
+            value: data.totalComplaints || 0,
+            icon: 'message',
+            color: 'red',
+            subLabel: 'Pending:',
+            subValue: data.pendingComplaints || 0
+          });
+
+          // Update pending counts
+          document.getElementById('pending-operators-count').textContent =
+            data.pendingOperators || 0;
+          document.getElementById('pending-vehicles-count').textContent =
+            (data.totalVehicles || 0) - (data.approvedVehicles || 0);
+          document.getElementById('pending-complaints-count').textContent =
+            data.pendingComplaints || 0;
+
+          // Update today's activity
+          document.getElementById('rides-today').textContent = data.todayRides || 0;
+          document.getElementById('revenue-today').textContent = formatCurrency(data.todayRevenue || 0);
+          document.getElementById('new-passengers').textContent = data.newPassengersToday || 0;
+
+        } else {
+          Toast.error(response.error || 'Failed to load dashboard data');
+        }
+      } catch (error) {
+        console.error('Dashboard error:', error);
+        Toast.error('Failed to load dashboard data');
+      }
+    }
+
+    // Start initialization
+    init();
+  </script>
+</body>
+</html>
