@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Build outputs
+build/
+flutter_sawari/build/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# JVM crash logs
+hs_err_pid*.log
+replay_pid*.log
+
+# Uploads (user content)
+sawari-backend/uploads/operators/*
+sawari-backend/uploads/vehicles/*
+!sawari-backend/uploads/operators/.gitkeep
+!sawari-backend/uploads/vehicles/.gitkeep
+
+# Firebase
+**/firebase-debug.log
