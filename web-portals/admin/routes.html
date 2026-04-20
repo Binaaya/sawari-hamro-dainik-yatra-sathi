@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Routes & Stops - Sawari Admin</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+  <link rel="stylesheet" href="../shared/css/common.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-container">
+    <div id="sidebar"></div>
+    <div class="main-content">
+      <div id="header"></div>
+      <div class="page-content">
+        <div id="tabs-container"></div>
+
+        <!-- Routes Section -->
+        <div id="routes-section">
+          <div style="display: flex; justify-content: flex-end; margin-bottom: 16px;">
+            <button id="add-route-btn" class="btn btn-primary">+ Add Route</button>
+          </div>
+          <div id="routes-table"></div>
+        </div>
+
+        <!-- Stops Section -->
+        <div id="stops-section" style="display: none;">
+          <div style="display: flex; justify-content: flex-end; margin-bottom: 16px;">
+            <button id="add-stop-btn" class="btn btn-primary">+ Add Stop</button>
+          </div>
+          <div id="stops-table"></div>
+        </div>
+
+        <!-- Vehicle Routes Section -->
+        <div id="vr-section" style="display: none;">
+          <div style="display: flex; justify-content: flex-end; margin-bottom: 16px;">
+            <button id="assign-vr-btn" class="btn btn-primary">+ Assign Vehicle</button>
+          </div>
+          <div id="vr-table"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="../shared/js/firebase-init.js"></script>
+  <script type="module">
+    import { auth } from './assets/js/auth.js';
+    import { api } from './assets/js/api.js';
+    import { Sidebar } from './assets/js/components/sidebar.js';
+    import { Header } from './assets/js/components/header.js';
+    import { Tabs } from './assets/js/components/tabs.js';
+    import { DataTable } from './assets/js/components/table.js';
+    import { Modal } from './assets/js/components/modal.js';
+    import { Toast } from './assets/js/components/toast.js';
+    import { formatCurrency } from './assets/js/utils.js';
+
+    let routesTable, stopsTable, vrTable;
+    let allStops = [], routes = [];
+
+    async function init() {
+      const user = await auth.checkAuth();
+      if (!user) { window.location.href = 'login.html'; return; }
+      document.querySelector('.app-container').classList.add('authenticated');
+
+      new Sidebar('sidebar', 'routes');
+      const header = new Header('header', user);
+      header.setPageTitle('Routes & Stops');
+
+      new Tabs('tabs-container', {
+        tabs: [
+          { id: 'routes', label: 'Routes' },
+          { id: 'stops', label: 'Stops' },
+          { id: 'vr', label: 'Vehicle Routes' }
+        ],
+        activeTab: 'routes',
+        onChange: (tabId) => {
+          document.getElementById('routes-section').style.display = tabId === 'routes' ? 'block' : 'none';
+          document.getElementById('stops-section').style.display = tabId === 'stops' ? 'block' : 'none';
+          document.getElementById('vr-section').style.display = tabId === 'vr' ? 'block' : 'none';
+        }
+      });
+
+      initTables();
+      loadRoutes();
+      loadStops();
+      loadVehicleRoutes();
+
+      document.getElementById('add-route-btn').addEventListener('click', () => showRouteModal());
+      document.getElementById('add-stop-btn').addEventListener('click', () => showStopModal());
+      document.getElementById('assign-vr-btn').addEventListener('click', () => showAssignVehicleModal());
+    }
+
+    function initTables() {
+      routesTable = new DataTable('routes-table', {
+        columns: [
+          { key: 'routecode', label: 'Code', width: '80px' },
+          { key: 'routename', label: 'Route Name' },
+          { key: 'stop_count', label: 'Stops', render: (v) => v || 0 },
+          { key: 'vehicle_count', label: 'Vehicles', render: (v) => v || 0 },
+          { key: 'maxfarenpr', label: 'Max Fare', render: (v) => formatCurrency(v) },
+          {
+            key: 'isactive', label: 'Status',
+            render: (v) => v !== false
+              ? '<span class="badge badge-active">Active</span>'
+              : '<span class="badge badge-inactive">Inactive</span>'
+          }
+        ],
+        emptyMessage: 'No routes found',
+        rowActions: [
+          { id: 'edit', label: 'Edit', class: 'btn-outline', onClick: (row) => showRouteModal(row) },
+          { id: 'delete', label: 'Delete', class: 'btn-outline', onClick: (row) => confirmDeleteRoute(row) }
+        ]
+      });
+
+      stopsTable = new DataTable('stops-table', {
+        columns: [
+          { key: 'stopname', label: 'Stop Name' },
+          { key: 'latitude', label: 'Latitude', render: (v) => v ? parseFloat(v).toFixed(6) : '-' },
+          { key: 'longitude', label: 'Longitude', render: (v) => v ? parseFloat(v).toFixed(6) : '-' },
+          { key: 'route_count', label: 'Used in Routes', render: (v) => v || 0 }
+        ],
+        emptyMessage: 'No stops found',
+        rowActions: [
+          { id: 'edit', label: 'Edit', class: 'btn-outline', onClick: (row) => showStopModal(row) }
+        ]
+      });
+
+      vrTable = new DataTable('vr-table', {
+        columns: [
+          { key: 'registrationnumber', label: 'Vehicle' },
+          { key: 'vehicletype', label: 'Type' },
+          { key: 'operatorname', label: 'Operator' },
+          { key: 'routename', label: 'Route' },
+          { key: 'routecode', label: 'Code', width: '80px' }
+        ],
+        emptyMessage: 'No vehicle assignments found',
+        rowActions: [
+          { id: 'remove', label: 'Remove', class: 'btn-outline', onClick: (row) => confirmRemoveVR(row) }
+        ]
+      });
+    }
+
+    async function loadRoutes() {
+      routesTable.setLoading(true);
+      const resp = await api.getRoutes();
+      if (resp.success) {
+        routes = resp.data.routes || [];
+        routesTable.setData(routes);
+      } else {
+        Toast.error(resp.error || 'Failed to load routes');
+        routesTable.setData([]);
+      }
+    }
+
+    async function loadStops() {
+      stopsTable.setLoading(true);
+      const resp = await api.getStops();
+      if (resp.success) {
+        allStops = resp.data.stops || [];
+        stopsTable.setData(allStops);
+      } else {
+        Toast.error(resp.error || 'Failed to load stops');
+        stopsTable.setData([]);
+      }
+    }
+
+    async function loadVehicleRoutes() {
+      vrTable.setLoading(true);
+      const resp = await api.getVehicleRoutes();
+      if (resp.success) {
+        vrTable.setData(resp.data.vehicleRoutes || []);
+      } else {
+        Toast.error(resp.error || 'Failed to load vehicle routes');
+        vrTable.setData([]);
+      }
+    }
+
+    function buildStopOptions(selectedId = '') {
+      return `<option value="">Select stop...</option>` +
+        allStops.map(s => `<option value="${s.stopid}" ${s.stopid == selectedId ? 'selected' : ''}>${s.stopname}</option>`).join('');
+    }
+
+    async function showRouteModal(route = null) {
+      const isEdit = !!route;
+      let currentStops = [];
+
+      if (isEdit) {
+        const resp = await api.getRouteStops(route.routeid);
+        if (resp.success) currentStops = resp.data.stops;
+      }
+
+      const modal = new Modal({
+        title: isEdit ? `Edit Route (${route.routecode})` : 'Add Route',
+        size: 'md',
+        confirmText: isEdit ? 'Update' : 'Create',
+        onConfirm: async () => {
+          const routeName = document.getElementById('route-name').value.trim();
+          const stops = [1,2,3,4,5,6].map(i => parseInt(document.getElementById(`route-stop-${i}`).value));
+
+          if (!routeName) { Toast.error('Route name is required'); return; }
+          if (stops.some(s => !s)) { Toast.error('All 6 stops must be selected'); return; }
+          if (new Set(stops).size !== 6) { Toast.error('All 6 stops must be different'); return; }
+
+          const data = { routeName, stops };
+          if (isEdit) data.isActive = document.getElementById('route-active').checked;
+
+          modal.setLoading(true);
+          const resp = isEdit
+            ? await api.updateRoute(route.routeid, data)
+            : await api.createRoute(data);
+
+          if (resp.success) {
+            Toast.success(isEdit ? 'Route updated' : 'Route created');
+            modal.close();
+            loadRoutes();
+          } else {
+            Toast.error(resp.error || 'Operation failed');
+            modal.setLoading(false);
+          }
+        }
+      });
+
+      modal.setContent(`
+        <div class="form-group">
+          <label class="form-label">Route Name *</label>
+          <input type="text" id="route-name" class="form-input" value="${route?.routename || ''}" placeholder="e.g., Lagankhel - Ratnapark">
+        </div>
+        ${isEdit ? `<div class="form-group"><label style="display: flex; align-items: center; gap: 8px; cursor: pointer;"><input type="checkbox" id="route-active" ${route.isactive !== false ? 'checked' : ''}> Active</label></div>` : ''}
+        <p style="font-size: 13px; color: #6B7280; margin-bottom: 12px;">Assign 6 stops in sequence order. Fare: NPR 5 per hop (Max: NPR 25)</p>
+        ${[1,2,3,4,5,6].map((i, idx) => `
+          <div class="form-group">
+            <label class="form-label">Stop ${i} *</label>
+            <select id="route-stop-${i}" class="form-select">${buildStopOptions(currentStops[idx]?.stopid)}</select>
+          </div>
+        `).join('')}
+      `);
+
+      modal.open();
+    }
+
+    function showStopModal(stop = null) {
+      const isEdit = !!stop;
+      const modal = new Modal({
+        title: isEdit ? 'Edit Stop' : 'Add Stop',
+        size: 'md',
+        confirmText: isEdit ? 'Update' : 'Create',
+        onConfirm: async () => {
+          if (isEdit) {
+            const stopName = document.getElementById('stop-name').value.trim();
+            if (!stopName) { Toast.error('Stop name is required'); return; }
+
+            modal.setLoading(true);
+            const resp = await api.updateStop(stop.stopid, { stopName });
+            if (resp.success) {
+              Toast.success('Stop updated');
+              modal.close();
+              loadStops();
+            } else {
+              Toast.error(resp.error || 'Failed to update stop');
+              modal.setLoading(false);
+            }
+          } else {
+            const data = {
+              stopName: document.getElementById('stop-name').value.trim(),
+              latitude: parseFloat(document.getElementById('stop-lat').value),
+              longitude: parseFloat(document.getElementById('stop-lng').value)
+            };
+            if (!data.stopName) { Toast.error('Stop name is required'); return; }
+            if (isNaN(data.latitude) || isNaN(data.longitude)) { Toast.error('Latitude and longitude are required'); return; }
+
+            modal.setLoading(true);
+            const resp = await api.createStop(data);
+            if (resp.success) {
+              Toast.success('Stop created');
+              modal.close();
+              loadStops();
+            } else {
+              Toast.error(resp.error || 'Failed to create stop');
+              modal.setLoading(false);
+            }
+          }
+        }
+      });
+
+      if (isEdit) {
+        modal.setContent(`
+          <div class="form-group">
+            <label class="form-label">Stop Name *</label>
+            <input type="text" id="stop-name" class="form-input" value="${stop.stopname}">
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+            <div class="form-group">
+              <label class="form-label">Latitude</label>
+              <input type="text" class="form-input" value="${stop.latitude ? parseFloat(stop.latitude).toFixed(6) : '-'}" disabled style="background: #f3f4f6;">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Longitude</label>
+              <input type="text" class="form-input" value="${stop.longitude ? parseFloat(stop.longitude).toFixed(6) : '-'}" disabled style="background: #f3f4f6;">
+            </div>
+          </div>
+        `);
+      } else {
+        modal.setContent(`
+          <div class="form-group">
+            <label class="form-label">Stop Name *</label>
+            <input type="text" id="stop-name" class="form-input" placeholder="e.g., Kalanki">
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+            <div class="form-group">
+              <label class="form-label">Latitude *</label>
+              <input type="number" id="stop-lat" class="form-input" step="0.000001" placeholder="27.6933">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Longitude *</label>
+              <input type="number" id="stop-lng" class="form-input" step="0.000001" placeholder="85.2815">
+            </div>
+          </div>
+        `);
+      }
+
+      modal.open();
+    }
+
+    async function showAssignVehicleModal() {
+      const vehiclesResp = await api.getAllVehicles({ approved: 'true' });
+      const vehicles = vehiclesResp.success ? (vehiclesResp.data.vehicles || []) : [];
+
+      const modal = new Modal({
+        title: 'Assign Vehicle to Route',
+        size: 'md',
+        confirmText: 'Assign',
+        onConfirm: async () => {
+          const vehicleId = parseInt(document.getElementById('vr-vehicle').value);
+          const routeId = parseInt(document.getElementById('vr-route').value);
+          if (!vehicleId || !routeId) { Toast.error('Select both vehicle and route'); return; }
+
+          modal.setLoading(true);
+          const resp = await api.assignVehicleRoute({ vehicleId, routeId });
+          if (resp.success) {
+            Toast.success('Vehicle assigned to route');
+            modal.close();
+            loadVehicleRoutes();
+            loadRoutes();
+          } else {
+            Toast.error(resp.error || 'Failed to assign');
+            modal.setLoading(false);
+          }
+        }
+      });
+
+      modal.setContent(`
+        <div class="form-group">
+          <label class="form-label">Vehicle *</label>
+          <select id="vr-vehicle" class="form-select">
+            <option value="">Select vehicle...</option>
+            ${vehicles.map(v => `<option value="${v.vehicleid}">${v.registrationnumber} (${v.vehicletype})</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Route *</label>
+          <select id="vr-route" class="form-select">
+            <option value="">Select route...</option>
+            ${routes.filter(r => r.isactive !== false).map(r => `<option value="${r.routeid}">${r.routename} (${r.routecode})</option>`).join('')}
+          </select>
+        </div>
+      `);
+
+      modal.open();
+    }
+
+    function confirmDeleteRoute(route) {
+      const modal = new Modal({
+        title: 'Delete Route',
+        size: 'sm',
+        confirmText: 'Delete',
+        onConfirm: async () => {
+          modal.setLoading(true);
+          const resp = await api.deleteRoute(route.routeid);
+          if (resp.success) {
+            Toast.success('Route deleted');
+            modal.close();
+            loadRoutes();
+            loadVehicleRoutes();
+          } else {
+            Toast.error(resp.error || 'Failed to delete route');
+            modal.setLoading(false);
+          }
+        }
+      });
+      modal.setContent(`<p>Delete <strong>${route.routename}</strong> (${route.routecode})? This removes all stop and vehicle assignments for this route.</p>`);
+      modal.open();
+    }
+
+    function confirmRemoveVR(row) {
+      const modal = new Modal({
+        title: 'Remove Assignment',
+        size: 'sm',
+        confirmText: 'Remove',
+        onConfirm: async () => {
+          modal.setLoading(true);
+          const resp = await api.removeVehicleRoute(row.vehicleid, row.routeid);
+          if (resp.success) {
+            Toast.success('Vehicle removed from route');
+            modal.close();
+            loadVehicleRoutes();
+            loadRoutes();
+          } else {
+            Toast.error(resp.error || 'Failed to remove');
+            modal.setLoading(false);
+          }
+        }
+      });
+      modal.setContent(`<p>Remove <strong>${row.registrationnumber}</strong> from <strong>${row.routename}</strong>?</p>`);
+      modal.open();
+    }
+
+    init();
+  </script>
+</body>
+</html>
