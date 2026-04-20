@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RFID Cards - Sawari Admin</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+  <link rel="stylesheet" href="../shared/css/common.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-container">
+    <div id="sidebar"></div>
+    <div class="main-content">
+      <div id="header"></div>
+      <div class="page-content">
+        <!-- Actions Bar -->
+        <div class="card" style="margin-bottom: 20px; padding: 16px;">
+          <div style="display: flex; gap: 12px; flex-wrap: wrap; align-items: center; justify-content: space-between;">
+            <div style="display: flex; gap: 12px; align-items: center;">
+              <select id="status-filter" class="form-select" style="max-width: 180px;">
+                <option value="">All Cards</option>
+                <option value="Active">Active</option>
+                <option value="Inactive">Inactive</option>
+              </select>
+            </div>
+            <button id="scan-assign-btn" class="btn btn-primary" style="background: #059669;">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 8px;">
+                <rect x="2" y="4" width="14" height="10" rx="2"/><path d="M6 14v2M12 14v2"/>
+              </svg>
+              Scan &amp; Assign Card
+            </button>
+          </div>
+        </div>
+
+        <div id="cards-table"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="../shared/js/firebase-init.js"></script>
+  <script type="module">
+    import { auth } from './assets/js/auth.js';
+    import { api } from './assets/js/api.js';
+    import { Sidebar } from './assets/js/components/sidebar.js';
+    import { Header } from './assets/js/components/header.js';
+    import { DataTable } from './assets/js/components/table.js';
+    import { Modal } from './assets/js/components/modal.js';
+    import { Toast } from './assets/js/components/toast.js';
+    import { formatDateTime, getStatusBadgeClass } from './assets/js/utils.js';
+
+    let table, passengers = [];
+
+    async function init() {
+      const user = await auth.checkAuth();
+      if (!user) { window.location.href = 'login.html'; return; }
+      document.querySelector('.app-container').classList.add('authenticated');
+
+      new Sidebar('sidebar', 'rfid-cards');
+      const header = new Header('header', user);
+      header.setPageTitle('RFID Cards');
+
+      initTable();
+      loadCards();
+      loadPassengers();
+
+      document.getElementById('status-filter').addEventListener('change', () => loadCards());
+      document.getElementById('scan-assign-btn').addEventListener('click', () => showScanAssignModal());
+    }
+
+    function initTable() {
+      table = new DataTable('cards-table', {
+        columns: [
+          { key: 'carduid', label: 'Card UID' },
+          {
+            key: 'cardstatus',
+            label: 'Status',
+            render: (v) => `<span class="badge ${getStatusBadgeClass(v)}">${v}</span>`
+          },
+          {
+            key: 'passenger_name',
+            label: 'Assigned To',
+            render: (v, row) => v ? `<span>${v}</span>` : '<span class="text-gray-400">Unassigned</span>'
+          },
+          { key: 'passenger_phone', label: 'Phone', render: (v) => v || '-' },
+          { key: 'issuedat', label: 'Issued', render: (v) => formatDateTime(v) }
+        ],
+        emptyMessage: 'No RFID cards found',
+        rowActions: [
+          {
+            id: 'deactivate',
+            label: 'Deactivate',
+            class: 'btn-danger',
+            show: (row) => row.cardstatus === 'Active',
+            onClick: (row) => deactivateCard(row)
+          },
+          {
+            id: 'delete',
+            label: 'Delete',
+            class: 'btn-danger',
+            show: (row) => row.cardstatus === 'Inactive',
+            onClick: (row) => deleteCard(row)
+          }
+        ]
+      });
+    }
+
+    async function loadCards() {
+      table.setLoading(true);
+      const params = {};
+      const status = document.getElementById('status-filter').value;
+      if (status) params.status = status;
+
+      const response = await api.getRfidCards(params);
+      if (response.success) {
+        table.setData(response.data.rfidCards || []);
+      } else {
+        Toast.error(response.error || 'Failed to load cards');
+        table.setData([]);
+      }
+    }
+
+    async function loadPassengers() {
+      const response = await api.getPassengers({ hasCard: 'false' });
+      if (response.success) {
+        passengers = response.data.passengers || [];
+      }
+    }
+
+    function showScanAssignModal() {
+      let scannedUid = '';
+
+      const passengerOptions = passengers.map(p =>
+        `<option value="${p.passengerid}">${p.fullname} (${p.phonenumber || p.email})</option>`
+      ).join('');
+
+      const modal = new Modal({
+        title: 'Scan & Assign RFID Card',
+        size: 'sm',
+        confirmText: 'Assign Card',
+        onConfirm: async () => {
+          const passengerId = document.getElementById('scan-passenger-select').value;
+
+          if (!passengerId) {
+            Toast.error('Please select a passenger');
+            return;
+          }
+          if (!scannedUid) {
+            Toast.error('Please scan a card first');
+            return;
+          }
+
+          modal.setLoading(true);
+          const response = await api.scanAssignRfidCard(scannedUid, parseInt(passengerId));
+          if (response.success) {
+            Toast.success('Card scanned and assigned successfully');
+            modal.close();
+            loadCards();
+            loadPassengers();
+          } else {
+            Toast.error(response.error || 'Failed to assign card');
+            modal.setLoading(false);
+          }
+        }
+      });
+
+      modal.setContent(`
+        <div class="form-group">
+          <label class="form-label">Select Passenger *</label>
+          <select id="scan-passenger-select" class="form-select">
+            <option value="">Choose a passenger...</option>
+            ${passengerOptions}
+          </select>
+          <p style="font-size: 12px; color: #6B7280; margin-top: 4px;">Only passengers without cards are shown</p>
+        </div>
+
+        <div class="form-group" style="margin-top: 16px;">
+          <label class="form-label">Card UID</label>
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <div id="scanned-uid-display" style="flex: 1; padding: 10px 12px; background: #F3F4F6; border: 2px dashed #D1D5DB; border-radius: 8px; font-family: monospace; font-size: 16px; color: #6B7280; min-height: 42px; display: flex; align-items: center;">
+              Waiting for scan...
+            </div>
+          </div>
+          <button type="button" id="scan-card-btn" class="btn btn-primary" style="margin-top: 8px; width: 100%; background: #059669;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 6px;">
+              <rect x="2" y="4" width="12" height="8" rx="1.5"/><path d="M5 12v2M11 12v2"/>
+            </svg>
+            Click here then tap RFID card
+          </button>
+          <p style="font-size: 12px; color: #6B7280; margin-top: 4px;">Click the button above, then tap the RFID card on the reader. The UID will appear automatically.</p>
+        </div>
+      `);
+
+      modal.open();
+
+      // RFID reader acts as keyboard HID — capture input when scan button is focused
+      setTimeout(() => {
+        const scanBtn = document.getElementById('scan-card-btn');
+        const uidDisplay = document.getElementById('scanned-uid-display');
+        let buffer = '';
+        let timeout = null;
+
+        scanBtn.addEventListener('click', () => {
+          buffer = '';
+          scannedUid = '';
+          uidDisplay.textContent = 'Scanning... tap card now';
+          uidDisplay.style.color = '#D97706';
+          uidDisplay.style.borderColor = '#F59E0B';
+          scanBtn.disabled = true;
+          scanBtn.textContent = 'Listening for card tap...';
+
+          // Listen for keyboard input from RFID reader
+          const onKeyDown = (e) => {
+            if (e.key === 'Enter') {
+              // RFID reader sends Enter after UID
+              e.preventDefault();
+              clearTimeout(timeout);
+              document.removeEventListener('keydown', onKeyDown);
+              scannedUid = buffer.trim();
+              if (scannedUid) {
+                uidDisplay.textContent = scannedUid;
+                uidDisplay.style.color = '#059669';
+                uidDisplay.style.borderColor = '#059669';
+              } else {
+                uidDisplay.textContent = 'No UID received. Try again.';
+                uidDisplay.style.color = '#DC2626';
+                uidDisplay.style.borderColor = '#DC2626';
+              }
+              scanBtn.disabled = false;
+              scanBtn.textContent = 'Click here then tap RFID card';
+            } else if (e.key.length === 1) {
+              e.preventDefault();
+              buffer += e.key;
+              // Reset timeout — if no Enter within 3s, treat buffer as UID
+              clearTimeout(timeout);
+              timeout = setTimeout(() => {
+                document.removeEventListener('keydown', onKeyDown);
+                scannedUid = buffer.trim();
+                if (scannedUid) {
+                  uidDisplay.textContent = scannedUid;
+                  uidDisplay.style.color = '#059669';
+                  uidDisplay.style.borderColor = '#059669';
+                }
+                scanBtn.disabled = false;
+                scanBtn.textContent = 'Click here then tap RFID card';
+              }, 3000);
+            }
+          };
+
+          document.addEventListener('keydown', onKeyDown);
+
+          // Auto-cancel after 10 seconds if nothing scanned
+          setTimeout(() => {
+            document.removeEventListener('keydown', onKeyDown);
+            if (!scannedUid) {
+              uidDisplay.textContent = 'Scan timed out. Try again.';
+              uidDisplay.style.color = '#DC2626';
+              uidDisplay.style.borderColor = '#DC2626';
+            }
+            scanBtn.disabled = false;
+            scanBtn.textContent = 'Click here then tap RFID card';
+          }, 10000);
+        });
+      }, 100);
+    }
+
+    function deactivateCard(card) {
+      const modal = new Modal({
+        title: 'Deactivate Card',
+        size: 'sm',
+        confirmText: 'Deactivate',
+        confirmClass: 'btn-danger',
+        onConfirm: async () => {
+          const reason = document.getElementById('deactivate-reason').value;
+          modal.setLoading(true);
+          const response = await api.deactivateRfidCard(card.cardid, reason);
+          if (response.success) {
+            Toast.success('Card deactivated');
+            modal.close();
+            loadCards();
+          } else {
+            Toast.error(response.error || 'Failed to deactivate card');
+            modal.setLoading(false);
+          }
+        }
+      });
+
+      modal.setContent(`
+        <p style="margin-bottom: 16px; color: #4B5563;">
+          Deactivate card <strong>${card.carduid}</strong>?
+          ${card.passenger_name ? `<br><span style="color: #D4183D;">This will unassign it from ${card.passenger_name}.</span>` : ''}
+        </p>
+        <div class="form-group">
+          <label class="form-label">Reason (optional)</label>
+          <textarea id="deactivate-reason" class="form-textarea" rows="2" placeholder="e.g., Lost, damaged, etc."></textarea>
+        </div>
+      `);
+
+      modal.open();
+    }
+
+    function deleteCard(card) {
+      const modal = new Modal({
+        title: 'Delete Card',
+        size: 'sm',
+        confirmText: 'Delete Permanently',
+        confirmClass: 'btn-danger',
+        onConfirm: async () => {
+          modal.setLoading(true);
+          const response = await api.deleteRfidCard(card.cardid);
+          if (response.success) {
+            Toast.success('Card deleted permanently');
+            modal.close();
+            loadCards();
+            loadPassengers();
+          } else {
+            Toast.error(response.error || 'Failed to delete card');
+            modal.setLoading(false);
+          }
+        }
+      });
+
+      modal.setContent(`
+        <p style="margin-bottom: 16px; color: #4B5563;">
+          Permanently delete card <strong>${card.carduid}</strong>?
+          ${card.passenger_name ? `<br><span style="color: #D4183D;">This will unassign it from ${card.passenger_name}.</span>` : ''}
+        </p>
+        <p style="color: #DC2626; font-size: 13px;">This action cannot be undone. The card record will be removed entirely.</p>
+      `);
+
+      modal.open();
+    }
+
+    init();
+  </script>
+</body>
+</html>
