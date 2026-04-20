@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Passengers - Sawari Admin</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+  <link rel="stylesheet" href="../shared/css/common.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-container">
+    <div id="sidebar"></div>
+    <div class="main-content">
+      <div id="header"></div>
+      <div class="page-content">
+        <!-- Search & Filter -->
+        <div class="card" style="margin-bottom: 20px; padding: 16px;">
+          <div style="display: flex; gap: 12px; flex-wrap: wrap; align-items: center;">
+            <input type="text" id="search-input" class="form-input" placeholder="Search by name, email, or phone..." style="max-width: 300px;">
+            <select id="card-filter" class="form-select" style="max-width: 180px;">
+              <option value="">All Passengers</option>
+              <option value="true">With RFID Card</option>
+              <option value="false">Without RFID Card</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Passengers Table -->
+        <div id="passengers-table"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="../shared/js/firebase-init.js"></script>
+  <script type="module">
+    import { auth } from './assets/js/auth.js';
+    import { api } from './assets/js/api.js';
+    import { Sidebar } from './assets/js/components/sidebar.js';
+    import { Header } from './assets/js/components/header.js';
+    import { DataTable } from './assets/js/components/table.js';
+    import { Modal } from './assets/js/components/modal.js';
+    import { Toast } from './assets/js/components/toast.js';
+    import { formatCurrency, formatDateTime, debounce } from './assets/js/utils.js';
+
+    let table;
+
+    async function init() {
+      const user = await auth.checkAuth();
+      if (!user) { window.location.href = 'login.html'; return; }
+      document.querySelector('.app-container').classList.add('authenticated');
+
+      new Sidebar('sidebar', 'passengers');
+      const header = new Header('header', user);
+      header.setPageTitle('Passengers');
+
+      initTable();
+      loadPassengers();
+
+      document.getElementById('search-input').addEventListener('input', debounce(() => loadPassengers(), 300));
+      document.getElementById('card-filter').addEventListener('change', () => loadPassengers());
+    }
+
+    function initTable() {
+      table = new DataTable('passengers-table', {
+        columns: [
+          { key: 'fullname', label: 'Name' },
+          { key: 'email', label: 'Email' },
+          { key: 'phonenumber', label: 'Phone' },
+          {
+            key: 'accountbalancenpr',
+            label: 'Balance',
+            render: (v) => `<span style="font-weight: 600; color: ${v < 10 ? '#D4183D' : '#10B981'};">${v} tokens</span>`
+          },
+          {
+            key: 'carduid',
+            label: 'RFID Card',
+            render: (v) => v ? `<span class="badge badge-active">${v}</span>` : '<span class="text-gray-400">None</span>'
+          },
+          { key: 'address', label: 'Address', render: (v) => v || '-' }
+        ],
+        emptyMessage: 'No passengers found',
+        rowActions: [
+          {
+            id: 'view',
+            label: 'View',
+            icon: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/></svg>',
+            class: 'btn-outline',
+            onClick: (row) => showPassengerDetails(row)
+          },
+          {
+            id: 'topup',
+            label: 'Top Up',
+            icon: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>',
+            class: 'btn-primary',
+            onClick: (row) => showTopUpModal(row)
+          },
+          {
+            id: 'delete',
+            label: 'Delete',
+            icon: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14"/></svg>',
+            class: 'btn-danger',
+            onClick: (row) => confirmDeleteUser(row)
+          }
+        ]
+      });
+    }
+
+    async function loadPassengers() {
+      table.setLoading(true);
+      const params = {};
+      const search = document.getElementById('search-input').value;
+      const hasCard = document.getElementById('card-filter').value;
+
+      if (search) params.search = search;
+      if (hasCard) params.hasCard = hasCard;
+
+      const response = await api.getPassengers(params);
+      if (response.success) {
+        table.setData(response.data.passengers || []);
+      } else {
+        Toast.error(response.error || 'Failed to load passengers');
+        table.setData([]);
+      }
+    }
+
+    async function showPassengerDetails(passenger) {
+      const response = await api.getPassenger(passenger.passengerid);
+      if (!response.success) {
+        Toast.error('Failed to load passenger details');
+        return;
+      }
+
+      const data = response.data;
+      const p = data.passenger;
+      const rides = data.recentRides || [];
+      const transactions = data.recentTransactions || [];
+
+      const modal = new Modal({ title: p.fullname, size: 'lg', showFooter: false });
+
+      modal.setContent(`
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px;">
+          <div>
+            <h4 style="font-weight: 600; margin-bottom: 12px;">Details</h4>
+            <div style="font-size: 14px; space-y: 2;">
+              <p><span style="color: #6B7280;">Email:</span> ${p.email || '-'}</p>
+              <p><span style="color: #6B7280;">Phone:</span> ${p.phonenumber || '-'}</p>
+              <p><span style="color: #6B7280;">Address:</span> ${p.address || '-'}</p>
+              <p><span style="color: #6B7280;">Citizenship:</span> ${p.citizenshipnumber || '-'}</p>
+              <p><span style="color: #6B7280;">RFID Card:</span> ${p.carduid || 'Not assigned'}</p>
+              <p><span style="color: #6B7280;">Balance:</span> <strong style="color: #10B981;">${p.accountbalancenpr} tokens</strong></p>
+            </div>
+          </div>
+          <div>
+            <h4 style="font-weight: 600; margin-bottom: 12px;">Recent Rides (${rides.length})</h4>
+            <div style="max-height: 200px; overflow-y: auto;">
+              ${rides.length === 0 ? '<p style="color: #9CA3AF;">No rides yet</p>' : rides.map(r => `
+                <div style="padding: 8px 0; border-bottom: 1px solid #F3F4F6; font-size: 13px;">
+                  <div style="display: flex; justify-content: space-between;">
+                    <span>${r.routename || 'Route'}</span>
+                    <span style="color: #10B981;">${formatCurrency(r.fareamountnpr)}</span>
+                  </div>
+                  <div style="color: #6B7280; font-size: 12px;">${formatDateTime(r.entrytime)}</div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        </div>
+      `);
+
+      modal.open();
+    }
+
+    function showTopUpModal(passenger) {
+      const modal = new Modal({
+        title: 'Cash Top Up',
+        size: 'sm',
+        confirmText: 'Process Top Up',
+        onConfirm: async () => {
+          const amount = parseFloat(document.getElementById('topup-amount').value);
+
+          if (!amount || amount < 50) {
+            Toast.error('Minimum top-up amount is NPR 50');
+            return;
+          }
+          if (amount % 5 !== 0) {
+            Toast.error('Amount must be a multiple of 5');
+            return;
+          }
+
+          modal.setLoading(true);
+          const response = await api.topUpPassenger(passenger.passengerid, amount);
+          if (response.success) {
+            Toast.success(`Successfully added ${amount / 5} tokens (${formatCurrency(amount)}) to ${passenger.fullname}'s account`);
+            modal.close();
+            loadPassengers();
+          } else {
+            Toast.error(response.error || 'Top up failed');
+            modal.setLoading(false);
+          }
+        }
+      });
+
+      modal.setContent(`
+        <p style="margin-bottom: 16px; color: #4B5563;">
+          Add balance to <strong>${passenger.fullname}</strong>'s account.
+          <br><span style="font-size: 13px;">Current balance: ${passenger.accountbalancenpr} tokens</span>
+        </p>
+        <div class="form-group">
+          <label class="form-label">Amount (NPR) *</label>
+          <input type="number" id="topup-amount" class="form-input" placeholder="Minimum NPR 50" min="50" step="5">
+          <p style="font-size: 12px; color: #6B7280; margin-top: 4px;">Minimum: NPR 50 &bull; Must be multiple of 5 &bull; 5 NPR = 1 Token</p>
+        </div>
+      `);
+
+      modal.open();
+    }
+
+    function confirmDeleteUser(passenger) {
+      const modal = new Modal({
+        title: 'Delete User Account',
+        size: 'sm',
+        confirmText: 'Delete Account',
+        confirmClass: 'btn-danger',
+        onConfirm: async () => {
+          modal.setLoading(true);
+          const response = await api.deleteUser(passenger.userid);
+          if (response.success) {
+            Toast.success(response.message || 'User deleted successfully');
+            modal.close();
+            loadPassengers();
+          } else {
+            Toast.error(response.error || 'Failed to delete user');
+            modal.setLoading(false);
+          }
+        }
+      });
+
+      modal.setContent(`
+        <div style="text-align: center; padding: 12px 0;">
+          <div style="width: 48px; height: 48px; border-radius: 50%; background: #FEE2E2; display: flex; align-items: center; justify-content: center; margin: 0 auto 16px;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" stroke="#DC2626" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14"/></svg>
+          </div>
+          <p style="font-weight: 600; font-size: 16px; margin-bottom: 8px;">Delete ${passenger.fullname}?</p>
+          <p style="color: #6B7280; font-size: 14px;">This will permanently delete this user's account, rides, transactions, and remove them from Firebase Auth. This action cannot be undone.</p>
+        </div>
+      `);
+
+      modal.open();
+    }
+
+    init();
+  </script>
+</body>
+</html>
