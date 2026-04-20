@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:file_picker/file_picker.dart';
+import 'dart:io';
 import '../../theme/app_colors.dart';
 import '../../providers/app_state.dart';
 import '../../services/api_service.dart';
@@ -34,6 +36,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final nameController = TextEditingController(text: user.fullName ?? '');
     final phoneController = TextEditingController(text: user.phone ?? '');
+    final addressController = TextEditingController(text: user.address ?? '');
+    String? selectedImagePath;
 
     showModalBottomSheet(
       context: context,
@@ -58,7 +62,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 top: 24,
                 bottom: MediaQuery.of(context).viewInsets.bottom + 24,
               ),
-              child: Column(
+              child: SingleChildScrollView(
+                child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -93,6 +98,79 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                   const SizedBox(height: 24),
 
+                  // Profile Picture
+                  Center(
+                    child: GestureDetector(
+                      onTap: () async {
+                        final result = await FilePicker.pickFiles(
+                          type: FileType.image,
+                          allowMultiple: false,
+                        );
+                        if (result != null && result.files.single.path != null) {
+                          setModalState(() {
+                            selectedImagePath = result.files.single.path;
+                          });
+                        }
+                      },
+                      child: Stack(
+                        children: [
+                          Container(
+                            width: 80,
+                            height: 80,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              gradient: selectedImagePath == null && user.profilePicture == null
+                                  ? const LinearGradient(
+                                      colors: [AppColors.emerald500, Color(0xFF2563EB)],
+                                      begin: Alignment.topLeft,
+                                      end: Alignment.bottomRight,
+                                    )
+                                  : null,
+                              image: selectedImagePath != null
+                                  ? DecorationImage(
+                                      image: FileImage(File(selectedImagePath!)),
+                                      fit: BoxFit.cover,
+                                    )
+                                  : user.profilePicture != null
+                                      ? DecorationImage(
+                                          image: NetworkImage(
+                                            '${ApiConfig.baseUrl.replaceAll('/api', '')}${user.profilePicture}',
+                                          ),
+                                          fit: BoxFit.cover,
+                                        )
+                                      : null,
+                            ),
+                            child: selectedImagePath == null && user.profilePicture == null
+                                ? Center(
+                                    child: Text(
+                                      (user.fullName ?? 'U')[0].toUpperCase(),
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 28,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  )
+                                : null,
+                          ),
+                          Positioned(
+                            bottom: 0,
+                            right: 0,
+                            child: Container(
+                              padding: const EdgeInsets.all(6),
+                              decoration: BoxDecoration(
+                                color: isDark ? AppColors.emerald500 : AppColors.emerald600,
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(Icons.camera_alt, size: 14, color: Colors.white),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+
                   // Name
                   Text('Full Name',
                       style: TextStyle(fontSize: 14, color: subtitleColor)),
@@ -111,6 +189,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   TextField(
                     controller: phoneController,
                     keyboardType: TextInputType.phone,
+                    style: TextStyle(color: textColor),
+                    decoration: _modalInputDecoration(isDark),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Address
+                  Text('Address',
+                      style: TextStyle(fontSize: 14, color: subtitleColor)),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: addressController,
                     style: TextStyle(color: textColor),
                     decoration: _modalInputDecoration(isDark),
                   ),
@@ -160,6 +249,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                   await _updateProfile(
                                     nameController.text,
                                     phoneController.text,
+                                    addressController.text,
+                                    selectedImagePath,
                                   );
                                   setModalState(() => _isUpdatingProfile = false);
                                   if (context.mounted) Navigator.pop(context);
@@ -191,6 +282,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                 ],
               ),
+              ),
             );
           },
         );
@@ -198,11 +290,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Future<void> _updateProfile(String fullName, String phone) async {
-    final response = await _apiService.put('/auth/profile', {
-      'fullName': fullName,
-      'phone': phone,
-    });
+  Future<void> _updateProfile(String fullName, String phone, String address, String? imagePath) async {
+    final response = await _apiService.updateProfile(
+      fullName: fullName.isNotEmpty ? fullName : null,
+      phone: phone.isNotEmpty ? phone : null,
+      address: address.isNotEmpty ? address : null,
+      profilePicturePath: imagePath,
+    );
 
     if (response.success) {
       // Refresh user data
@@ -380,35 +474,47 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
                     child: Column(
                       children: [
-                        // Avatar with initial
+                        // Avatar with initial or profile picture
                         Stack(
                           children: [
                             Container(
                               width: 96,
                               height: 96,
-                              decoration: const BoxDecoration(
-                                gradient: LinearGradient(
-                                  colors: [
-                                    AppColors.emerald500,
-                                    Color(0xFF2563EB),
-                                  ],
-                                  begin: Alignment.topLeft,
-                                  end: Alignment.bottomRight,
-                                ),
+                              decoration: BoxDecoration(
+                                gradient: user?.profilePicture == null
+                                    ? const LinearGradient(
+                                        colors: [
+                                          AppColors.emerald500,
+                                          Color(0xFF2563EB),
+                                        ],
+                                        begin: Alignment.topLeft,
+                                        end: Alignment.bottomRight,
+                                      )
+                                    : null,
                                 shape: BoxShape.circle,
+                                image: user?.profilePicture != null
+                                    ? DecorationImage(
+                                        image: NetworkImage(
+                                          '${ApiConfig.baseUrl.replaceAll('/api', '')}${user!.profilePicture}',
+                                        ),
+                                        fit: BoxFit.cover,
+                                      )
+                                    : null,
                               ),
-                              child: Center(
-                                child: Text(
-                                  userName.isNotEmpty
-                                      ? userName[0].toUpperCase()
-                                      : 'U',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 36,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ),
+                              child: user?.profilePicture == null
+                                  ? Center(
+                                      child: Text(
+                                        userName.isNotEmpty
+                                            ? userName[0].toUpperCase()
+                                            : 'U',
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 36,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    )
+                                  : null,
                             ),
                             Positioned(
                               bottom: 0,
@@ -487,6 +593,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 value: userEmail,
                                 isDark: isDark,
                               ),
+                              if (user?.address != null && user!.address!.isNotEmpty) ...[
+                                const SizedBox(height: 12),
+                                _InfoRow(
+                                  icon: Icons.location_on_outlined,
+                                  label: 'Address:',
+                                  value: user.address!,
+                                  isDark: isDark,
+                                ),
+                              ],
                               if (user?.citizenshipNumber != null) ...[
                                 const SizedBox(height: 12),
                                 _InfoRow(

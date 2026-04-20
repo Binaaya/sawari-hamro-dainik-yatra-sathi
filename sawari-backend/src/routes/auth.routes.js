@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const authController = require('../controllers/auth.controller');
 const { authenticate } = require('../middleware/auth');
-const { operatorUpload } = require('../middleware/upload');
+const { operatorUpload, passengerUpload } = require('../middleware/upload');
 
 // POST /api/auth/register - Register new user (creates Firebase user + DB record)
 router.post('/register', operatorUpload.single('businessDocument'), authController.register);
@@ -14,7 +14,7 @@ router.post('/login', authController.login);
 router.get('/me', authenticate, authController.getCurrentUser);
 
 // PUT /api/auth/profile - Update user profile
-router.put('/profile', authenticate, authController.updateProfile);
+router.put('/profile', authenticate, passengerUpload.single('profilepicture'), authController.updateProfile);
 
 // POST /api/auth/verify-token - Verify if token is valid
 router.post('/verify-token', authController.verifyToken);

@@ -99,6 +99,7 @@ class UserModel {
   final int? passengerId;
   final String? fullName;
   final String? address;
+  final String? profilePicture;
   final double? balance;
   final String? citizenshipNumber;
   final int? rfidCardId;
@@ -119,6 +120,7 @@ class UserModel {
     this.passengerId,
     this.fullName,
     this.address,
+    this.profilePicture,
     this.balance,
     this.citizenshipNumber,
     this.rfidCardId,
@@ -141,6 +143,7 @@ class UserModel {
       passengerId: json['passengerid'],
       fullName: json['fullname'],
       address: json['address'],
+      profilePicture: json['profilepicture'],
       balance: double.tryParse(json['accountbalancenpr']?.toString() ?? ''),
       citizenshipNumber: json['citizenshipnumber'],
       rfidCardId: json['rfidcardid'],

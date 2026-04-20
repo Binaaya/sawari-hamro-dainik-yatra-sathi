@@ -23,6 +23,7 @@ const authenticate = async (req, res, next) => {
     // Get user from database
     const userResult = await db.query(
       `SELECT u.*, p.passengerid, p.accountbalancenpr, p.rfidcardid, p.fullname, p.citizenshipnumber,
+              p.address, p.profilepicture,
               o.operatorid, o.operatorname, o.approvalstatus as operator_approved
        FROM users u
        LEFT JOIN passengers p ON u.userid = p.userid

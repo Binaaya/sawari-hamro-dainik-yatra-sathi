@@ -166,8 +166,9 @@ const updateProfile = asyncHandler(async (req, res) => {
   const userId = req.user.userid;
   const role = req.user.role;
   const { fullName, phone, address } = req.body;
+  const profilePicFile = req.file;
 
-  if (!fullName && !phone && !address) {
+  if (!fullName && !phone && !address && !profilePicFile) {
     throw new ApiError(400, 'No fields to update');
   }
 
@@ -187,6 +188,10 @@ const updateProfile = asyncHandler(async (req, res) => {
     if (address) {
       await db.query('UPDATE passengers SET address = $1 WHERE userid = $2', [address, userId]);
     }
+    if (profilePicFile) {
+      const picturePath = `/uploads/passengers/${profilePicFile.filename}`;
+      await db.query('UPDATE passengers SET profilepicture = $1 WHERE userid = $2', [picturePath, userId]);
+    }
   } else if (role === 'Operator' && fullName) {
     await db.query('UPDATE operators SET operatorname = $1 WHERE userid = $2', [fullName, userId]);
   }
@@ -195,7 +200,7 @@ const updateProfile = asyncHandler(async (req, res) => {
   const result = await db.query(
     `SELECT u.userid, u.email, u.phonenumber, u.role, u.updatedat,
             COALESCE(p.fullname, o.operatorname) as fullname,
-            p.address
+            p.address, p.profilepicture
      FROM users u
      LEFT JOIN passengers p ON u.userid = p.userid
      LEFT JOIN operators o ON u.userid = o.userid

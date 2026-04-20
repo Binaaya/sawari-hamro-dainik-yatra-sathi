@@ -412,7 +412,29 @@ class ApiService {
     String? fullName,
     String? phone,
     String? address,
-  }) {
+    String? profilePicturePath,
+  }) async {
+    if (profilePicturePath != null) {
+      // Multipart upload when profile picture is included
+      try {
+        final uri = Uri.parse('${ApiConfig.baseUrl}/auth/profile');
+        final request = http.MultipartRequest('PUT', uri);
+        if (_authToken != null) {
+          request.headers['Authorization'] = 'Bearer $_authToken';
+        }
+        if (fullName != null) request.fields['fullName'] = fullName;
+        if (phone != null) request.fields['phone'] = phone;
+        if (address != null) request.fields['address'] = address;
+        request.files.add(await http.MultipartFile.fromPath('profilepicture', profilePicturePath));
+
+        final streamed = await request.send().timeout(const Duration(seconds: 30));
+        final response = await http.Response.fromStream(streamed);
+        return _handleResponse(response);
+      } catch (e) {
+        return ApiResponse(success: false, error: e.toString());
+      }
+    }
+
     return put('/auth/profile', {
       if (fullName != null) 'fullName': fullName,
       if (phone != null) 'phone': phone,
