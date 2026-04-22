@@ -115,7 +115,7 @@ class AppSnackBar {
       return 'Your session has expired. Please login again.';
     }
     if (lower.contains('invalid token') || lower.contains('invalid-credential')) {
-      return 'Invalid credentials. Please check your email and password.';
+      return 'Incorrect email or password. Please check your credentials and try again.';
     }
     if (lower.contains('please register first') || lower.contains('please complete your registration')) {
       return 'Please complete your registration to continue.';

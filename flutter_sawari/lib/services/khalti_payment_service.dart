@@ -10,6 +10,21 @@ class KhaltiPaymentService {
 
   final ApiService _apiService = ApiService();
 
+  /// Verify payment with backend, retrying up to [maxRetries] times
+  Future<double?> _verifyWithRetry(String pidx, {int maxRetries = 3}) async {
+    for (int i = 0; i < maxRetries; i++) {
+      if (i > 0) await Future.delayed(const Duration(seconds: 2));
+      debugPrint('Verify attempt ${i + 1}/$maxRetries for pidx: $pidx');
+      final response = await _apiService.verifyKhaltiPayment(pidx);
+      if (response.success && response.data != null) {
+        final balance = (response.data!['data']?['balance'] as num?)?.toDouble();
+        if (balance != null) return balance;
+      }
+      debugPrint('Verify attempt ${i + 1} failed: ${response.error}');
+    }
+    return null;
+  }
+
   /// Start the Khalti payment flow.
   /// Returns the new wallet balance on success, null on failure/cancel.
   Future<double?> startPayment({
@@ -30,10 +45,8 @@ class KhaltiPaymentService {
       return null;
     }
 
-    // Bridge callback-based SDK with async/await
     final completer = Completer<double?>();
 
-    // Initialize Khalti SDK
     final khaltiInstance = await Khalti.init(
       enableDebugging: true,
       payConfig: KhaltiPayConfig(
@@ -42,39 +55,37 @@ class KhaltiPaymentService {
         environment: Environment.test,
       ),
       onPaymentResult: (paymentResult, khalti) async {
-        debugPrint('Khalti payment result: ${paymentResult.payload?.status}');
+        debugPrint('Khalti onPaymentResult: ${paymentResult.payload?.status}');
         // ignore: use_build_context_synchronously
         khalti.close(context);
-        // Verify payment with backend
-        final verifyResponse = await _apiService.verifyKhaltiPayment(pidx);
-        if (verifyResponse.success && verifyResponse.data != null) {
-          final balance = (verifyResponse.data!['data']?['balance'] as num?)?.toDouble();
-          completer.complete(balance);
-        } else {
-          debugPrint('Backend verify failed: ${verifyResponse.error}');
-          completer.complete(null);
-        }
+        final balance = await _verifyWithRetry(pidx);
+        if (!completer.isCompleted) completer.complete(balance);
       },
       onMessage: (khalti, {description, statusCode, event, needsPaymentConfirmation}) async {
-        debugPrint('Khalti message: $description | event: $event | needsConfirmation: $needsPaymentConfirmation');
-        if (needsPaymentConfirmation == true) {
-          // Payment status uncertain — verify with backend
-          await khalti.verify();
-        }
+        debugPrint('Khalti onMessage: $description | event: $event | confirm: $needsPaymentConfirmation');
+
+        // kpgDisposed is normal cleanup — ignore
+        if (event == KhaltiEvent.kpgDisposed) return;
+
         // ignore: use_build_context_synchronously
         khalti.close(context);
-        if (!completer.isCompleted) completer.complete(null);
+
+        // Wait to let onPaymentResult fire first (it's the reliable callback)
+        await Future.delayed(const Duration(seconds: 1));
+        if (completer.isCompleted) return;
+
+        // Payment might have succeeded — verify with backend
+        final balance = await _verifyWithRetry(pidx);
+        if (!completer.isCompleted) completer.complete(balance);
       },
       onReturn: () {
         debugPrint('Khalti return_url loaded');
       },
     );
 
-    // Open payment UI
     if (!context.mounted) return null;
     khaltiInstance.open(context);
 
-    // Await payment completion
     return completer.future;
   }
 }

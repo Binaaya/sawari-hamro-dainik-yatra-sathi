@@ -78,7 +78,7 @@ export class DataTable {
               ${this.columns.map(col => `
                 <th style="${col.width ? `width: ${col.width};` : ''}">${col.label}</th>
               `).join('')}
-              ${hasActions ? '<th style="width: 100px;">Actions</th>' : ''}
+              ${hasActions ? '<th style="white-space: nowrap;">Actions</th>' : ''}
             </tr>
           </thead>
           <tbody>
@@ -88,19 +88,20 @@ export class DataTable {
                   <td>${this.renderCell(row, col)}</td>
                 `).join('')}
                 ${hasActions ? `
-                  <td>
-                    <div style="display: flex; gap: 8px;">
+                  <td style="white-space: nowrap;">
+                    <div style="display: flex; gap: 6px; flex-wrap: nowrap;">
                       ${this.rowActions.map(action => {
                         if (action.show && !action.show(row)) return '';
+                        const content = action.icon
+                          ? action.icon + '<span style="margin-left:4px;">' + action.label + '</span>'
+                          : action.label;
                         return `<button
                           class="btn btn-sm ${action.class || 'btn-outline'}"
                           data-action="${action.id}"
                           data-row-index="${rowIndex}"
                           title="${action.label}"
-                          style="padding: 6px 10px; font-size: 12px;"
-                        >
-                          ${action.icon || action.label}
-                        </button>`;
+                          style="padding: 5px 10px; font-size: 12px; white-space: nowrap; display: inline-flex; align-items: center;"
+                        >${content}</button>`;
                       }).join('')}
                     </div>
                   </td>

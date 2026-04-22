@@ -85,7 +85,7 @@ class _SawariAppState extends State<SawariApp> {
     return Consumer<AppState>(
       builder: (context, appState, child) {
         // Show loading while initializing
-        if (!_initialized || appState.isLoading) {
+        if (!_initialized) {
           return MaterialApp(
             debugShowCheckedModeBanner: false,
             theme: AppTheme.lightTheme,

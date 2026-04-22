@@ -1,5 +1,6 @@
 const db = require('../config/database');
 const { asyncHandler, ApiError } = require('../middleware/errorHandler');
+const { notifyUser } = require('./notifications.controller');
 
 /**
  * Get complaints (for authenticated user or admin)
@@ -184,11 +185,7 @@ const createComplaint = asyncHandler(async (req, res) => {
       );
     }
 
-    // Send push notification to admins
-    const { sendPushToUser } = require('./notifications.controller');
-    for (const admin of admins.rows) {
-      await sendPushToUser(admin.userid, 'New Complaint', truncatedText);
-    }
+    // DB notifications already inserted above — app polls for them
   } catch (notifError) {
     // Don't fail the complaint creation if notification fails
     console.error('Failed to send complaint notification:', notifError.message);
@@ -226,16 +223,48 @@ const updateComplaint = asyncHandler(async (req, res) => {
     throw new ApiError(404, 'Complaint not found');
   }
 
+  // Build dynamic SET clause so both status and resolution update properly
+  const updates = [];
+  const params = [];
+
+  if (status) {
+    params.push(status);
+    updates.push(`complaintstatus = $${params.length}`);
+  }
+
+  if (resolution !== undefined && resolution !== null) {
+    params.push(resolution);
+    updates.push(`resolutionnotes = $${params.length}`);
+  }
+
+  if (status === 'Resolved' || status === 'Rejected') {
+    params.push(adminUserId);
+    updates.push(`resolvedby = $${params.length}`);
+    updates.push(`resolvedat = NOW()`);
+  } else if (status === 'InProgress') {
+    params.push(adminUserId);
+    updates.push(`resolvedby = $${params.length}`);
+    updates.push(`resolvedat = NULL`);
+  }
+
+  if (updates.length === 0) {
+    throw new ApiError(400, 'No fields to update');
+  }
+
+  params.push(id);
   const result = await db.query(
     `UPDATE complaints
-     SET complaintstatus = COALESCE($1, complaintstatus),
-         resolutionnotes = COALESCE($2, resolutionnotes),
-         resolvedby = CASE WHEN $1 IN ('Resolved', 'Rejected') THEN $3 ELSE resolvedby END,
-         resolvedat = CASE WHEN $1 IN ('Resolved', 'Rejected') THEN NOW() ELSE resolvedat END
-     WHERE complaintid = $4
+     SET ${updates.join(', ')}
+     WHERE complaintid = $${params.length}
      RETURNING *`,
-    [status, resolution, adminUserId, id]
+    params
   );
+
+  if (status && ['Resolved', 'Rejected', 'InProgress'].includes(status)) {
+    const statusLabel = status === 'InProgress' ? 'in progress' : status.toLowerCase();
+    const noteText = resolution ? ` Notes: ${resolution}` : '';
+    await notifyUser(result.rows[0].userid, 'Complaint Update', `Your complaint has been marked as ${statusLabel}.${noteText}`, 'complaint');
+  }
 
   res.json({
     success: true,

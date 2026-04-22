@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../../theme/app_colors.dart';
 import '../../providers/app_state.dart';
+import '../notifications/notifications_screen.dart';
 import 'buy_tokens_modal.dart';
 import 'active_ride_widget.dart';
 
@@ -14,6 +15,8 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  int _unreadNotifications = 0;
+
   @override
   void initState() {
     super.initState();
@@ -23,8 +26,20 @@ class _HomeScreenState extends State<HomeScreen> {
       if (appState.isAuthenticated) {
         appState.loadRecentRides();
         appState.loadActiveRide();
+        _loadUnreadCount();
       }
     });
+  }
+
+  Future<void> _loadUnreadCount() async {
+    final response = await Provider.of<AppState>(context, listen: false)
+        .apiService
+        .getNotifications(page: 1, limit: 1);
+    if (response.success && response.data != null && mounted) {
+      setState(() {
+        _unreadNotifications = response.data!['data']?['unread'] ?? 0;
+      });
+    }
   }
 
   void _showBuyTokensModal() {
@@ -42,6 +57,7 @@ class _HomeScreenState extends State<HomeScreen> {
       appState.refreshBalance(),
       appState.loadRecentRides(),
       appState.loadActiveRide(),
+      _loadUnreadCount(),
     ]);
   }
 
@@ -79,7 +95,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   children: [
                     const SizedBox(height: 16),
 
-                    // Header with Logo
+                    // Header with Logo and Notification Bell
                     Row(
                       children: [
                         Container(
@@ -106,25 +122,83 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         ),
                         const SizedBox(width: 12),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Sawari',
-                              style: TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.bold,
-                                color: textColor,
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Sawari',
+                                style: TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                  color: textColor,
+                                ),
                               ),
-                            ),
-                            const Text(
-                              'Hamro dainik yatra sathi',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: AppColors.emerald600,
+                              const Text(
+                                'Hamro dainik yatra sathi',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: AppColors.emerald600,
+                                ),
                               ),
+                            ],
+                          ),
+                        ),
+                        // Notification Bell
+                        GestureDetector(
+                          onTap: () async {
+                            await Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => const NotificationsScreen(),
+                              ),
+                            );
+                            _loadUnreadCount();
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: isDark ? AppColors.gray800 : AppColors.gray100,
+                              borderRadius: BorderRadius.circular(12),
                             ),
-                          ],
+                            child: Stack(
+                              clipBehavior: Clip.none,
+                              children: [
+                                Icon(
+                                  Icons.notifications_outlined,
+                                  size: 24,
+                                  color: isDark ? AppColors.gray300 : AppColors.gray600,
+                                ),
+                                if (_unreadNotifications > 0)
+                                  Positioned(
+                                    right: -4,
+                                    top: -4,
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                                      constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFEF4444),
+                                        borderRadius: BorderRadius.circular(10),
+                                        border: Border.all(
+                                          color: isDark ? AppColors.gray800 : AppColors.gray100,
+                                          width: 1.5,
+                                        ),
+                                      ),
+                                      child: Center(
+                                        child: Text(
+                                          _unreadNotifications > 99 ? '99+' : '$_unreadNotifications',
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 9,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
                         ),
                       ],
                     ),

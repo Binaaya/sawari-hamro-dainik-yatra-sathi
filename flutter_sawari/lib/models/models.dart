@@ -103,6 +103,7 @@ class UserModel {
   final double? balance;
   final String? citizenshipNumber;
   final int? rfidCardId;
+  final String? rfidCardUid;
 
   // Operator-specific fields
   final int? operatorId;
@@ -124,6 +125,7 @@ class UserModel {
     this.balance,
     this.citizenshipNumber,
     this.rfidCardId,
+    this.rfidCardUid,
     this.operatorId,
     this.operatorName,
     this.approvalStatus,
@@ -147,6 +149,7 @@ class UserModel {
       balance: double.tryParse(json['accountbalancenpr']?.toString() ?? ''),
       citizenshipNumber: json['citizenshipnumber'],
       rfidCardId: json['rfidcardid'],
+      rfidCardUid: json['carduid'],
       operatorId: json['operatorid'],
       operatorName: json['operatorname'],
       approvalStatus: json['approvalstatus'] ?? json['operator_approved'],

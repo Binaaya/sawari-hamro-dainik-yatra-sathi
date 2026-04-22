@@ -132,9 +132,25 @@ const sendPushToUser = async (userId, title, body) => {
   }
 };
 
+/**
+ * Create a DB notification (internal helper).
+ * The Flutter app polls for new notifications — no FCM push needed.
+ */
+const notifyUser = async (userId, title, message, type = 'general') => {
+  try {
+    await db.query(
+      `INSERT INTO notifications (userid, title, message, type) VALUES ($1, $2, $3, $4)`,
+      [userId, title, message, type]
+    );
+  } catch (err) {
+    console.error('Notification error:', err.message);
+  }
+};
+
 module.exports = {
   getNotifications,
   markAsRead,
   registerToken,
-  sendPushToUser
+  sendPushToUser,
+  notifyUser
 };

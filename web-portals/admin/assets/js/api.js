@@ -323,6 +323,16 @@ class ApiService {
   async getTransactionReports(params = {}) {
     return this.get('/admin/reports/transactions', params);
   }
+
+  // Notification Endpoints
+
+  async getNotifications(limit = 10) {
+    return this.get('/notifications', { limit });
+  }
+
+  async markNotificationRead(notificationId) {
+    return this.put(`/notifications/${notificationId}/read`, {});
+  }
 }
 
 export const api = new ApiService();

@@ -24,9 +24,11 @@ const authenticate = async (req, res, next) => {
     const userResult = await db.query(
       `SELECT u.*, p.passengerid, p.accountbalancenpr, p.rfidcardid, p.fullname, p.citizenshipnumber,
               p.address, p.profilepicture,
+              rc.carduid,
               o.operatorid, o.operatorname, o.approvalstatus as operator_approved
        FROM users u
        LEFT JOIN passengers p ON u.userid = p.userid
+       LEFT JOIN rfidcards rc ON p.rfidcardid = rc.cardid
        LEFT JOIN operators o ON u.userid = o.userid
        WHERE u.firebaseuid = $1`,
       [decodedToken.uid]

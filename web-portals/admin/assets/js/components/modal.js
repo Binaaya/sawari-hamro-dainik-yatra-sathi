@@ -164,6 +164,9 @@ export class Modal {
       if (this.onClose) {
         this.onClose();
       }
+
+      // Destroy modal element to prevent duplicate IDs in DOM
+      this.destroy();
     }
     return this;
   }

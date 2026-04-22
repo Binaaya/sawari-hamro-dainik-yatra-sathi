@@ -10,6 +10,9 @@ class AppState extends ChangeNotifier {
   final ApiService _apiService = ApiService();
   final AuthService _authService = AuthService();
 
+  /// Expose API service for notification queries etc.
+  ApiService get apiService => _apiService;
+
   // Auth state
   bool _isAuthenticated = false;
   bool _isLoading = false;
@@ -107,8 +110,8 @@ class AppState extends ChangeNotifier {
 
         _isAuthenticated = true;
         await _loadInitialData();
-        // Register FCM token for push notifications
-        NotificationService().registerToken();
+        // Start polling for notifications
+        NotificationService().startPolling();
       }
     } else {
       _error = AppSnackBar.friendlyError(result.error);
@@ -234,6 +237,7 @@ class AppState extends ChangeNotifier {
 
   /// Logout
   Future<void> logout() async {
+    NotificationService().stopPolling();
     await _authService.signOut();
     _isAuthenticated = false;
     _currentUser = null;
@@ -255,8 +259,8 @@ class AppState extends ChangeNotifier {
       if (userData != null) {
         _currentUser = UserModel.fromJson(userData);
         _isAuthenticated = true;
-        // Register FCM token for push notifications
-        NotificationService().registerToken();
+        // Start polling for notifications
+        NotificationService().startPolling();
       }
     }
   }
@@ -378,6 +382,7 @@ class AppState extends ChangeNotifier {
               double.tryParse(balanceData['balance']?.toString() ?? '0') ?? 0,
           citizenshipNumber: _currentUser!.citizenshipNumber,
           rfidCardId: _currentUser!.rfidCardId,
+          rfidCardUid: _currentUser!.rfidCardUid,
         );
         notifyListeners();
       }

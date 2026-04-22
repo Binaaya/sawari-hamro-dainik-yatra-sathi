@@ -277,7 +277,7 @@ class AuthService {
       case 'wrong-password':
         return 'Incorrect password. Please try again or reset your password.';
       case 'invalid-credential':
-        return 'Invalid email or password. Please check and try again.';
+        return 'Incorrect email or password. Please check your credentials and try again.';
       case 'email-already-in-use':
         return 'This email is already registered. Please login instead.';
       case 'weak-password':

@@ -718,7 +718,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         const SizedBox(height: 16),
                         Text(
                           rfidCardId != null
-                              ? 'Card ID: $rfidCardId'
+                              ? 'Card ID: ${user?.rfidCardUid ?? rfidCardId}'
                               : 'No card assigned yet',
                           style: const TextStyle(
                             color: Colors.white,

@@ -32,8 +32,8 @@ const initiateKhaltiPayment = asyncHandler(async (req, res) => {
   const amountInPaisa = Math.round(amount * 100);
 
   const payload = {
-    return_url: process.env.KHALTI_RETURN_URL || 'https://sawari.app/payment/success',
-    website_url: process.env.KHALTI_WEBSITE_URL || 'https://sawari.app',
+    return_url: process.env.KHALTI_RETURN_URL || 'https://example.com/payment/success',
+    website_url: process.env.KHALTI_WEBSITE_URL || 'https://example.com',
     amount: amountInPaisa,
     purchase_order_id: `SAWARI-${passengerId}-${Date.now()}`,
     purchase_order_name: `Sawari Top-Up NPR ${amount}`,
@@ -87,25 +87,46 @@ const verifyKhaltiPayment = asyncHandler(async (req, res) => {
     throw new ApiError(400, 'Only passengers can verify top-ups');
   }
 
-  // Lookup the payment via Khalti
-  const response = await fetch(`${KHALTI_BASE_URL}/epayment/lookup/`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Key ${KHALTI_SECRET_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ pidx }),
-  });
+  // Lookup the payment via Khalti — retry up to 3 times since
+  // test sandbox status can take a moment to propagate
+  let data;
+  const maxAttempts = 3;
 
-  const data = await response.json();
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const response = await fetch(`${KHALTI_BASE_URL}/epayment/lookup/`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Key ${KHALTI_SECRET_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ pidx }),
+    });
 
-  if (!response.ok) {
-    console.error('Khalti lookup error:', data);
-    throw new ApiError(502, 'Payment verification failed');
+    data = await response.json();
+    console.log(`Khalti lookup attempt ${attempt}:`, JSON.stringify(data));
+
+    if (!response.ok) {
+      console.error('Khalti lookup error:', data);
+      if (attempt === maxAttempts) {
+        throw new ApiError(502, 'Payment verification failed');
+      }
+      await new Promise(r => setTimeout(r, 2000));
+      continue;
+    }
+
+    if (data.status && data.status.toLowerCase() === 'completed') {
+      break; // Payment confirmed
+    }
+
+    // Not completed yet — retry after delay
+    if (attempt < maxAttempts) {
+      console.log(`Payment status: ${data.status} — retrying in 2s...`);
+      await new Promise(r => setTimeout(r, 2000));
+    }
   }
 
-  if (data.status !== 'Completed') {
-    throw new ApiError(400, `Payment is ${data.status}. Please try again.`);
+  if (!data.status || data.status.toLowerCase() !== 'completed') {
+    throw new ApiError(400, `Payment is not complete (status: ${data.status || 'unknown'}). Please try again.`);
   }
 
   // Amount from Khalti is in paisa, convert to NPR
@@ -113,11 +134,13 @@ const verifyKhaltiPayment = asyncHandler(async (req, res) => {
 
   // Credit the balance inside a DB transaction
   const result = await db.transaction(async (client) => {
-    // Idempotency: check if this pidx was already processed
+    // Idempotency: check if this exact amount was topped up in the last 30 seconds
+    // (prevents double-credit from retry logic)
     const existing = await client.query(
       `SELECT transactionid FROM transactions
-       WHERE userid = $1 AND transactiontype = 'TopUp' AND paymentmethod = $2`,
-      [userId, `Khalti:${pidx}`]
+       WHERE userid = $1 AND transactiontype = 'TopUp' AND paymentmethod = 'Khalti'
+         AND amountnpr = $2 AND transactiontime > NOW() - INTERVAL '30 seconds'`,
+      [userId, amountNpr]
     );
 
     if (existing.rows.length > 0) {
@@ -147,15 +170,15 @@ const verifyKhaltiPayment = asyncHandler(async (req, res) => {
       [newBalance, passengerId]
     );
 
-    // Create transaction record (paymentmethod stores pidx for traceability)
+    // Create transaction record — paymentmethod must match CHECK constraint
     const txResult = await client.query(
       `INSERT INTO transactions (userid, transactiontype, amountnpr, balancebeforenpr, balanceafternpr, paymentmethod)
-       VALUES ($1, 'TopUp', $2, $3, $4, $5)
+       VALUES ($1, 'TopUp', $2, $3, $4, 'Khalti')
        RETURNING transactionid`,
-      [userId, amountNpr, currentBalance, newBalance, `Khalti:${pidx}`]
+      [userId, amountNpr, currentBalance, newBalance]
     );
 
-    // Record in topuphistory
+    // Record in topuphistory with pidx for idempotency
     await client.query(
       `INSERT INTO topuphistory (transactionid, passengerid, topupamount, paymentmethod)
        VALUES ($1, $2, $3, 'Khalti')`,

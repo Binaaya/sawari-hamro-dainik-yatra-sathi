@@ -1,28 +1,28 @@
-import 'package:firebase_messaging/firebase_messaging.dart';
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'api_service.dart';
 
-/// Handles push notifications via Firebase Cloud Messaging
+/// Handles notifications by polling the backend and showing local notifications.
+/// No Firebase Cloud Messaging required.
 class NotificationService {
   static final NotificationService _instance = NotificationService._internal();
   factory NotificationService() => _instance;
   NotificationService._internal();
 
-  final FirebaseMessaging _messaging = FirebaseMessaging.instance;
   final FlutterLocalNotificationsPlugin _localNotifications =
       FlutterLocalNotificationsPlugin();
   final ApiService _apiService = ApiService();
 
-  Future<void> initialize() async {
-    // Request permission
-    await _messaging.requestPermission(
-      alert: true,
-      badge: true,
-      sound: true,
-    );
+  Timer? _pollTimer;
+  int _lastKnownUnread = 0;
+  bool _initialized = false;
 
-    // Initialize local notifications for foreground display
+  Future<void> initialize() async {
+    if (_initialized) return;
+    _initialized = true;
+
+    // Initialize local notifications for showing alerts
     const androidSettings =
         AndroidInitializationSettings('@mipmap/ic_launcher');
     const initSettings = InitializationSettings(android: androidSettings);
@@ -39,48 +39,84 @@ class NotificationService {
         .resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin>()
         ?.createNotificationChannel(channel);
-
-    // Listen for foreground messages
-    FirebaseMessaging.onMessage.listen(_handleForegroundMessage);
-
-    // Handle background message tap
-    FirebaseMessaging.onMessageOpenedApp.listen(_handleMessageTap);
   }
 
-  /// Register the device's FCM token with the backend
-  Future<void> registerToken() async {
+  /// Start polling the backend for new notifications every [interval] seconds
+  void startPolling({int intervalSeconds = 30}) {
+    stopPolling();
+    // Do an immediate check
+    _checkForNewNotifications();
+    // Then poll at interval
+    _pollTimer = Timer.periodic(
+      Duration(seconds: intervalSeconds),
+      (_) => _checkForNewNotifications(),
+    );
+    debugPrint('Notification polling started (every ${intervalSeconds}s)');
+  }
+
+  /// Stop polling
+  void stopPolling() {
+    _pollTimer?.cancel();
+    _pollTimer = null;
+  }
+
+  /// Check backend for new unread notifications and show local notification
+  Future<void> _checkForNewNotifications() async {
     try {
-      final token = await _messaging.getToken();
-      if (token != null) {
-        await _apiService.registerFcmToken(fcmToken: token);
+      final response = await _apiService.getNotifications(page: 1, limit: 5);
+      if (!response.success || response.data == null) return;
+
+      final data = response.data!['data'];
+      final int currentUnread = data['unread'] ?? 0;
+      final notifications = data['notifications'] as List? ?? [];
+
+      // If unread count increased, show the newest unread notification
+      if (currentUnread > _lastKnownUnread && _lastKnownUnread >= 0) {
+        // Find the most recent unread notification
+        final newest = notifications.firstWhere(
+          (n) => n['isread'] != true,
+          orElse: () => null,
+        );
+
+        if (newest != null) {
+          await _showLocalNotification(
+            title: newest['title'] ?? 'Sawari',
+            body: newest['message'] ?? 'You have a new notification',
+            id: newest['notificationid'] ?? DateTime.now().millisecondsSinceEpoch,
+          );
+        }
       }
 
-      // Listen for token refreshes
-      _messaging.onTokenRefresh.listen((newToken) {
-        _apiService.registerFcmToken(fcmToken: newToken);
-      });
+      _lastKnownUnread = currentUnread;
     } catch (e) {
-      debugPrint('Failed to register FCM token: $e');
+      debugPrint('Notification poll error: $e');
     }
   }
 
-  void _handleForegroundMessage(RemoteMessage message) {
-    _localNotifications.show(
-      message.hashCode,
-      message.notification?.title ?? 'Sawari',
-      message.notification?.body ?? '',
+  /// Show a local system notification
+  Future<void> _showLocalNotification({
+    required String title,
+    required String body,
+    required int id,
+  }) async {
+    await _localNotifications.show(
+      id,
+      title,
+      body,
       const NotificationDetails(
         android: AndroidNotificationDetails(
           'sawari_channel',
           'Sawari Notifications',
           importance: Importance.high,
           priority: Priority.high,
+          icon: '@mipmap/ic_launcher',
         ),
       ),
     );
   }
 
-  void _handleMessageTap(RemoteMessage message) {
-    debugPrint('Notification tapped: ${message.data}');
+  /// Reset unread counter (call after user views notifications)
+  void resetUnreadCount() {
+    _lastKnownUnread = 0;
   }
 }

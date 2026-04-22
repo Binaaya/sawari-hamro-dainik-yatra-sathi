@@ -41,12 +41,12 @@ async function findNearestStop(client, vehicle_id) {
  */
 const tapIn = asyncHandler(async (req, res) => {
   const { rfid_card_uid, vehicle_id } = req.body;
-  let { stop_id } = req.body;
-  
+  let stop_id = req.body.stop_id ? parseInt(req.body.stop_id) : null;
+
   if (!rfid_card_uid || !vehicle_id) {
     throw new ApiError(400, 'Missing required fields: rfid_card_uid, vehicle_id');
   }
-  
+
   const result = await db.transaction(async (client) => {
     // Auto-detect stop from GPS if not provided
     if (!stop_id) {
@@ -153,18 +153,14 @@ const tapIn = asyncHandler(async (req, res) => {
  */
 const tapOut = asyncHandler(async (req, res) => {
   const { rfid_card_uid, vehicle_id } = req.body;
-  let { stop_id } = req.body;
-  
+  let stop_id = req.body.stop_id ? parseInt(req.body.stop_id) : null;
+
   if (!rfid_card_uid || !vehicle_id) {
     throw new ApiError(400, 'Missing required fields: rfid_card_uid, vehicle_id');
   }
-  
+
   const result = await db.transaction(async (client) => {
-    // Auto-detect stop from GPS if not provided
-    if (!stop_id) {
-      stop_id = await findNearestStop(client, vehicle_id);
-    }
-    // Look up RFID card and passenger
+    // Look up RFID card and passenger FIRST (before GPS lookup)
     const cardResult = await client.query(
       `SELECT rc.cardid, p.passengerid, p.accountbalancenpr
        FROM rfidcards rc
@@ -195,6 +191,11 @@ const tapOut = asyncHandler(async (req, res) => {
     }
 
     const ride = rideResult.rows[0];
+
+    // Auto-detect stop from GPS if not provided
+    if (!stop_id) {
+      stop_id = await findNearestStop(client, vehicle_id);
+    }
 
     // Get exit stop details
     const exitStopResult = await client.query(

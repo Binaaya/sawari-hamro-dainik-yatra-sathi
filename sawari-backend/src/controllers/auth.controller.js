@@ -1,6 +1,7 @@
 const db = require('../config/database');
 const firebase = require('../config/firebase');
 const { asyncHandler, ApiError } = require('../middleware/errorHandler');
+const { notifyUser } = require('./notifications.controller');
 
 /**
  * Register a new user
@@ -60,9 +61,11 @@ const register = asyncHandler(async (req, res) => {
     const fullUser = await client.query(
       `SELECT u.userid, u.firebaseuid, u.email, u.phonenumber, u.role, u.accountstatus, u.createdat,
               p.passengerid, p.fullname, p.citizenshipnumber, p.accountbalancenpr, p.rfidcardid,
+              rc.carduid,
               o.operatorid, o.operatorname, o.approvalstatus
        FROM users u
        LEFT JOIN passengers p ON u.userid = p.userid
+       LEFT JOIN rfidcards rc ON p.rfidcardid = rc.cardid
        LEFT JOIN operators o ON u.userid = o.userid
        WHERE u.userid = $1`,
       [user.userid]
@@ -71,6 +74,16 @@ const register = asyncHandler(async (req, res) => {
     return fullUser.rows[0];
   });
   
+  // Notify admins of new registration
+  try {
+    const admins = await db.query("SELECT userid FROM users WHERE role = 'Admin'");
+    for (const admin of admins.rows) {
+      await notifyUser(admin.userid, 'New Registration', `A new ${role} account has been registered (${email}).`, 'registration');
+    }
+  } catch (notifErr) {
+    console.error('Failed to send registration notification:', notifErr.message);
+  }
+
   res.status(201).json({
     success: true,
     message: 'User registered successfully',
@@ -96,9 +109,11 @@ const login = asyncHandler(async (req, res) => {
   const userResult = await db.query(
     `SELECT u.*,
             p.passengerid, p.accountbalancenpr, p.rfidcardid, p.fullname,
+            rc.carduid,
             o.operatorid, o.operatorname, o.approvalstatus as operator_approved
      FROM users u
      LEFT JOIN passengers p ON u.userid = p.userid
+     LEFT JOIN rfidcards rc ON p.rfidcardid = rc.cardid
      LEFT JOIN operators o ON u.userid = o.userid
      WHERE u.firebaseuid = $1`,
     [decodedToken.uid]

@@ -44,7 +44,7 @@ class AuthService {
       localStorage.setItem('sawari_admin_login_time', Date.now().toString());
       return { success: true, user: this.currentUser };
     } catch (error) {
-      return { success: false, error: error.message };
+      return { success: false, error: this.getAuthErrorMessage(error) };
     }
   }
 
@@ -99,6 +99,29 @@ class AuthService {
         }
       });
     });
+  }
+
+  /**
+   * Convert Firebase auth error to user-friendly message
+   */
+  getAuthErrorMessage(error) {
+    const code = error.code || '';
+    switch (code) {
+      case 'auth/invalid-credential':
+      case 'auth/wrong-password':
+      case 'auth/user-not-found':
+        return 'Invalid email or password.';
+      case 'auth/invalid-email':
+        return 'Please enter a valid email address.';
+      case 'auth/user-disabled':
+        return 'This account has been disabled.';
+      case 'auth/too-many-requests':
+        return 'Too many failed attempts. Please try again later.';
+      case 'auth/network-request-failed':
+        return 'Network error. Please check your connection.';
+      default:
+        return error.message || 'Login failed. Please try again.';
+    }
   }
 
   /**

@@ -1,5 +1,6 @@
 const db = require('../config/database');
 const { asyncHandler, ApiError } = require('../middleware/errorHandler');
+const { notifyUser } = require('./notifications.controller');
 
 // Operator Approval
 
@@ -41,6 +42,8 @@ const approveOperator = asyncHandler(async (req, res) => {
     throw new ApiError(404, 'Operator not found');
   }
 
+  await notifyUser(result.rows[0].userid, 'Account Approved', 'Your operator account has been approved. You can now add and manage your fleet.', 'approval');
+
   res.json({
     success: true,
     message: 'Operator approved successfully',
@@ -66,6 +69,9 @@ const rejectOperator = asyncHandler(async (req, res) => {
   if (result.rows.length === 0) {
     throw new ApiError(404, 'Operator not found');
   }
+
+  const reasonText = reason ? ` Reason: ${reason}` : '';
+  await notifyUser(result.rows[0].userid, 'Application Rejected', `Your operator application has been rejected.${reasonText}`, 'rejection');
 
   res.json({
     success: true,
@@ -149,6 +155,11 @@ const approveVehicle = asyncHandler(async (req, res) => {
     throw new ApiError(404, 'Vehicle not found');
   }
 
+  const operatorForVehicle = await db.query('SELECT userid FROM operators WHERE operatorid = $1', [result.rows[0].operatorid]);
+  if (operatorForVehicle.rows.length > 0) {
+    await notifyUser(operatorForVehicle.rows[0].userid, 'Vehicle Approved', `Your vehicle ${result.rows[0].registrationnumber} has been approved and is ready for service.`, 'approval');
+  }
+
   res.json({
     success: true,
     message: 'Vehicle approved successfully',
@@ -165,12 +176,17 @@ const rejectVehicle = asyncHandler(async (req, res) => {
 
   const result = await db.query(
     `DELETE FROM vehicles WHERE vehicleid = $1 AND approvalstatus = 'Pending'
-     RETURNING vehicleid`,
+     RETURNING vehicleid, operatorid, registrationnumber`,
     [id]
   );
 
   if (result.rows.length === 0) {
     throw new ApiError(404, 'Vehicle not found or already approved');
+  }
+
+  const operatorForRejected = await db.query('SELECT userid FROM operators WHERE operatorid = $1', [result.rows[0].operatorid]);
+  if (operatorForRejected.rows.length > 0) {
+    await notifyUser(operatorForRejected.rows[0].userid, 'Vehicle Rejected', `Your vehicle registration for ${result.rows[0].registrationnumber} was not approved.`, 'rejection');
   }
 
   res.json({
@@ -365,6 +381,14 @@ const scanAssignRfidCard = asyncHandler(async (req, res) => {
       throw new ApiError(404, 'Passenger not found');
     }
   });
+
+  const passengerUser = await db.query(
+    'SELECT u.userid FROM passengers p JOIN users u ON p.userid = u.userid WHERE p.passengerid = $1',
+    [passengerId]
+  );
+  if (passengerUser.rows.length > 0) {
+    await notifyUser(passengerUser.rows[0].userid, 'RFID Card Assigned', 'An RFID card has been assigned to your account. You can now tap in/out for your rides.', 'rfid');
+  }
 
   res.json({
     success: true,
@@ -582,8 +606,10 @@ const topUpPassenger = asyncHandler(async (req, res) => {
       [txResult.rows[0].transactionid, id, amount, adminId]
     );
 
-    return { currentBalance, newBalance, amount };
+    return { currentBalance, newBalance, amount, userId };
   });
+
+  await notifyUser(result.userId, 'Top-up Successful', `NPR ${result.amount} has been added to your account. New balance: ${result.newBalance} tokens.`, 'topup');
 
   res.json({
     success: true,
@@ -619,23 +645,24 @@ const deleteUser = asyncHandler(async (req, res) => {
 
     // Delete role-specific records (cascading dependencies)
     if (user.role === 'Passenger') {
-      // Unassign RFID card if any
-      await client.query(
-        'UPDATE rfidcards SET assignedto = NULL, cardstatus = \'Active\' WHERE assignedto = (SELECT passengerid FROM passengers WHERE userid = $1)',
+      const passengerResult = await client.query(
+        'SELECT passengerid, rfidcardid FROM passengers WHERE userid = $1',
         [id]
       );
-      // Delete topup history
-      await client.query(
-        'DELETE FROM topuphistory WHERE passengerid = (SELECT passengerid FROM passengers WHERE userid = $1)',
-        [id]
-      );
-      // Delete rides
-      await client.query(
-        'DELETE FROM rides WHERE passengerid = (SELECT passengerid FROM passengers WHERE userid = $1)',
-        [id]
-      );
-      // Delete passenger record
-      await client.query('DELETE FROM passengers WHERE userid = $1', [id]);
+
+      if (passengerResult.rows.length > 0) {
+        const { passengerid, rfidcardid } = passengerResult.rows[0];
+
+        await client.query('DELETE FROM topuphistory WHERE passengerid = $1', [passengerid]);
+        await client.query('DELETE FROM rides WHERE passengerid = $1', [passengerid]);
+
+        if (rfidcardid) {
+          await client.query('UPDATE passengers SET rfidcardid = NULL WHERE passengerid = $1', [passengerid]);
+          await client.query('DELETE FROM rfidcards WHERE cardid = $1', [rfidcardid]);
+        }
+
+        await client.query('DELETE FROM passengers WHERE passengerid = $1', [passengerid]);
+      }
     } else if (user.role === 'Operator') {
       // Delete vehicles and related data
       await client.query(
@@ -764,24 +791,54 @@ const updateComplaint = asyncHandler(async (req, res) => {
     throw new ApiError(400, `Invalid status. Must be one of: ${validStatuses.join(', ')}`);
   }
 
-  let resolvedAt = null;
-  if (status === 'Resolved' || status === 'Rejected') {
-    resolvedAt = 'NOW()';
+  // Build dynamic SET clause so both status and resolution update in one take
+  const updates = [];
+  const params = [];
+
+  if (status) {
+    params.push(status);
+    updates.push(`complaintstatus = $${params.length}`);
   }
 
+  // Always update resolution notes when provided (even empty string to clear)
+  if (resolution !== undefined && resolution !== null) {
+    params.push(resolution);
+    updates.push(`resolutionnotes = $${params.length}`);
+  }
+
+  // Set resolvedby and resolvedat when status is terminal
+  if (status === 'Resolved' || status === 'Rejected') {
+    params.push(adminUserId);
+    updates.push(`resolvedby = $${params.length}`);
+    updates.push(`resolvedat = NOW()`);
+  } else if (status === 'InProgress') {
+    params.push(adminUserId);
+    updates.push(`resolvedby = $${params.length}`);
+    // Clear resolvedat when moving back to in-progress
+    updates.push(`resolvedat = NULL`);
+  }
+
+  if (updates.length === 0) {
+    throw new ApiError(400, 'No fields to update');
+  }
+
+  params.push(id);
   const result = await db.query(
     `UPDATE complaints
-     SET complaintstatus = COALESCE($1, complaintstatus),
-         resolutionnotes = COALESCE($2, resolutionnotes),
-         resolvedby = $3,
-         resolvedat = ${resolvedAt ? resolvedAt : 'resolvedat'}
-     WHERE complaintid = $4
+     SET ${updates.join(', ')}
+     WHERE complaintid = $${params.length}
      RETURNING *`,
-    [status, resolution, adminUserId, id]
+    params
   );
 
   if (result.rows.length === 0) {
     throw new ApiError(404, 'Complaint not found');
+  }
+
+  if (status && ['Resolved', 'Rejected', 'InProgress'].includes(status)) {
+    const statusLabel = status === 'InProgress' ? 'in progress' : status.toLowerCase();
+    const noteText = resolution ? ` Notes: ${resolution}` : '';
+    await notifyUser(result.rows[0].userid, 'Complaint Update', `Your complaint has been marked as ${statusLabel}.${noteText}`, 'complaint');
   }
 
   res.json({
